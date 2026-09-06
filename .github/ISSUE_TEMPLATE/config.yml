@@ -1,0 +1,3 @@
+# Issueテンプレートの選択画面の設定。
+# テンプレートに沿わないIssue（議論用など）も作成できるよう空白Issueを許可する。
+blank_issues_enabled: true
