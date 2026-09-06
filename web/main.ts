@@ -12,7 +12,7 @@ const status = $<HTMLElement>('#status');
 const tbody = $<HTMLTableSectionElement>('#tbl tbody');
 const detail = $<HTMLElement>('#detail');
 
-type SortKey = 'name' | 'buy' | 'sell' | 'vwap' | 'cons' | 'opt' | 'cap';
+type SortKey = 'name' | 'buy' | 'sell' | 'vwap' | 'cons' | 'opt' | 'fee' | 'net' | 'cap';
 let sortKey: SortKey = 'vwap';
 let sortDesc = true;
 let data: LoopsResponse | null = null;
@@ -23,6 +23,12 @@ const cls = (m: number) => (m > 1 ? 'pos' : m < 1 ? 'neg' : '');
 const hubName = (h: Hub) => HUB_LABEL[h].ja;
 const hubShort = (h: Hub) => HUB_LABEL[h].short;
 const fmtTime = (unix: number) => new Date(unix * 1000).toLocaleString('ja-JP', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const gold = (g: number) => `${Math.round(g).toLocaleString('en-US')}g`;
+/** fee column: total gold per item with the per-leg breakdown, or "?" when the item's fee is unknown */
+const fmtFee = (l: Loop) => l.goldFee
+	? `${gold(l.goldFee.total)} <span class="rng">(${gold(l.goldFee.item)}+${gold(l.goldFee.toHub)}+${gold(l.goldFee.fromHub)})</span>`
+	: '<span class="rng">?</span>';
+const fmtNet = (l: Loop) => l.profit.afterFee !== undefined ? `<span class="${cls(l.profit.afterFee)}">${pct(l.profit.afterFee)}</span>` : '<span class="rng">—</span>';
 
 /** Show "hub per item" as a readable ratio: 0.0143 div → "70 : 1 div" style, or "12.5 ex". */
 function fmtPrice(hubPerItem: number, hub: Hub): string {
@@ -109,7 +115,10 @@ function renderStatus() {
 	status.innerHTML =
 		`<b>${data.league}</b> ／ 集計窓 <b>${fmtTime(data.windowStart)} 〜 ${fmtTime(data.windowEnd)}</b>` +
 		` (${data.hoursUsed}h) ／ ${rate} ／ ループ候補 <b>${data.loops.length / 2 | 0}</b> アイテム` +
-		` (片側のみ ${data.skipped}) ／ 取得 ${fmtTime(data.generatedAt)}`;
+		` (片側のみ ${data.skipped}) ／ 取得 ${fmtTime(data.generatedAt)}` +
+		(data.goldPerHub.ex
+			? ` ／ ゴールド換算 1 ${hubShort('ex')} = <b>${gold(data.goldPerHub.ex)}</b>`
+			: ' ／ <span class="rng">ゴールド換算なし (POE2ARB_GOLD_PER_EX 未設定)</span>');
 }
 
 function filtered(): Loop[] {
@@ -128,6 +137,9 @@ function filtered(): Loop[] {
 	const key = (l: Loop): number | string => ({
 		name: l.name, buy: l.buy.vwap, sell: l.sell.vwap,
 		vwap: l.profit.vwap, cons: l.profit.conservative, opt: l.profit.optimistic, cap: l.capacityItems,
+		// unknown fee / no gold rate sort to the bottom in both directions
+		fee: l.goldFee?.total ?? (sortDesc ? -Infinity : Infinity),
+		net: l.profit.afterFee ?? (sortDesc ? -Infinity : Infinity),
 	})[sortKey];
 	rows = rows.sort((x, y) => {
 		const kx = key(x), ky = key(y);
@@ -153,11 +165,26 @@ function render() {
 			`<td class="num ${cls(l.profit.vwap)}"><b>${pct(l.profit.vwap)}</b></td>` +
 			`<td class="num ${cls(l.profit.conservative)}">${pct(l.profit.conservative)}</td>` +
 			`<td class="num ${cls(l.profit.optimistic)}">${pct(l.profit.optimistic)}</td>` +
+			`<td class="num">${fmtFee(l)}</td>` +
+			`<td class="num"><b>${fmtNet(l)}</b></td>` +
 			`<td class="num">${l.capacityItems} <span class="rng">(買${l.buy.volumeItems} / 売${l.sell.volumeItems} = ${l.sell.volumeHub} ${hubShort(l.sell.hub)})</span></td>`;
 		tr.addEventListener('click', () => { selected = loopKey(l); renderDetail(l); render(); });
 		tbody.append(tr);
 	});
-	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="10" class="l">条件に合うループなし</td></tr>';
+	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="12" class="l">条件に合うループなし</td></tr>';
+}
+
+/** Gold fee paragraph for the detail panel, scaled to the illustrative stack. */
+function feeDetail(l: Loop, items: number): string {
+	if (!l.goldFee) return `<p class="k">ゴールド手数料: 不明 (このアイテムの手数料がデータ源に無い)</p>`;
+	const f = l.goldFee;
+	const total = f.total * items;
+	const net = l.profit.afterFee !== undefined
+		? `<br>手数料込み: <b class="${cls(l.profit.afterFee)}">${pct(l.profit.afterFee)}</b> <span class="k">(1 ${hubShort(l.from)} = ${gold(data?.goldPerHub[l.from] ?? 0)} で換算)</span>`
+		: `<br><span class="k">手数料込み利益は POE2ARB_GOLD_PER_EX を設定すると出る</span>`;
+	return `<p><span class="k">ゴールド手数料の見積り (${trim(items)} 個分):</span> <b>${gold(total)}</b><br>` +
+		`<span class="k">内訳/個:</span> ${esc(l.name)} ${gold(f.item)} + ${hubShort(l.to)} ${gold(f.toHub)} + ${hubShort(l.from)} ${gold(f.fromHub)} = ${gold(f.total)}` +
+		net + `</p>`;
 }
 
 function renderDetail(l: Loop) {
@@ -180,7 +207,8 @@ function renderDetail(l: Loop) {
 		`<p><span class="k">VWAPでの試算 (${start} ${hubShort(l.from)} 開始):</span><br>` +
 		`${start} ${hubShort(l.from)} → ${trim(items)} 個 → ${trim(got)} ${hubShort(l.to)} → <b class="${cls(l.profit.vwap)}">${trim(back)} ${hubShort(l.from)}</b> (${pct(l.profit.vwap)})</p>` +
 		`<p class="k">保守(極端値) ${pct(l.profit.conservative)} ／ 楽観(極端値) ${pct(l.profit.optimistic)}<br>取引数の目安: ${l.capacityItems} 個/窓</p>` +
-		`<p class="k">※ 完了した直近1時間の「約定」の集計であって、今の板ではない。VWAPは約定量で加重した平均、幅(保守/楽観)は1件の変な約定でも大きく振れる。実行前にゲーム内でAltキーを押して競合注文を確認。</p>`;
+		feeDetail(l, items) +
+		`<p class="k">※ 完了した直近1時間の「約定」の集計であって、今の板ではない。VWAPは約定量で加重した平均、幅(保守/楽観)は1件の変な約定でも大きく振れる。実行前にゲーム内でAltキーを押して競合注文を確認。<br>※ 手数料は「要求側のアイテム1個あたり固定ゴールド × 個数」(poe2db の GoldPurchaseFee)として見積もった値で、実機では未検証。</p>`;
 }
 
 detail.addEventListener('click', (e) => {
