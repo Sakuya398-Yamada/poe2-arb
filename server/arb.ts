@@ -1,5 +1,5 @@
 // Pure arbitrage math. No I/O here so it can be unit-tested.
-import { HUB_IDS, type GggMarket, type Hub, type HubQuote, type Loop, type LoopStep, type Range } from '../shared/types.js';
+import { HUB_IDS, type GggMarket, type Hub, type HubQuote, type Loop, type LoopStep, type Range, type Recurrence } from '../shared/types.js';
 
 const ID_TO_HUB: Record<string, Hub> = Object.fromEntries(
 	(Object.entries(HUB_IDS) as [Hub, string][]).map(([h, id]) => [id, h]),
@@ -118,6 +118,37 @@ export function computeLoop(
 
 export interface NameResolver {
 	(itemId: string): { name: string; category: string; icon?: string };
+}
+
+/** Identity of a loop: same item, same direction. */
+export function loopKey(l: Pick<Loop, 'itemId' | 'from' | 'to'>): string {
+	return `${l.itemId}|${l.from}|${l.to}`;
+}
+
+/**
+ * Recurrence over hour buckets. `hourly[i]` = loops computed from bucket i alone.
+ * An hour where the loop is absent (no trades on one hub side) counts as not profitable, so a loop that
+ * appears only in a thin hour scores low even if that hour's VWAP looks great.
+ * medianProfit is taken over the hours where the loop existed, profitable or not, so it reflects stability.
+ */
+export function scoreRecurrence(hourly: Loop[][]): Map<string, Recurrence> {
+	const profits = new Map<string, number[]>();
+	for (const loops of hourly) {
+		for (const l of loops) {
+			const key = loopKey(l);
+			const arr = profits.get(key) ?? [];
+			arr.push(l.profit.vwap);
+			profits.set(key, arr);
+		}
+	}
+	const out = new Map<string, Recurrence>();
+	for (const [key, arr] of profits) {
+		const sorted = [...arr].sort((a, b) => a - b);
+		const mid = sorted.length >> 1;
+		const medianProfit = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+		out.set(key, { hoursProfitable: arr.filter((p) => p > 1).length, hoursTotal: hourly.length, medianProfit });
+	}
+	return out;
 }
 
 /** All loops between the two hubs, both directions. Unsorted. */

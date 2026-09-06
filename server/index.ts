@@ -5,7 +5,7 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { buildBook, findLoops } from './arb.js';
+import { buildBook, findLoops, loopKey, scoreRecurrence } from './arb.js';
 import { fetchWindow } from './ggg.js';
 import { loadIcons } from './icons.js';
 import { loadNames, makeResolver } from './names.js';
@@ -31,6 +31,12 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 	const resolve = makeResolver(names, (art) => icons[art]);
 	const book = buildBook(win.markets);
 	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve);
+	// Recurrence: recompute loops per hour bucket (same cached data, no extra fetches) and count profitable hours.
+	const hourly = win.byBucket.map((h) => findLoops(buildBook(h.markets), hubs[0], hubs[1], resolve).loops);
+	const recurrence = scoreRecurrence(hourly);
+	for (const l of loops) {
+		l.recurrence = recurrence.get(loopKey(l)) ?? { hoursProfitable: 0, hoursTotal: hourly.length, medianProfit: null };
+	}
 	const hubIcons: LoopsResponse['hubIcons'] = {};
 	for (const h of HUBS) { const icon = resolve(HUB_IDS[h]).icon; if (icon) hubIcons[h] = icon; }
 	loops.sort((a, b) => b.profit.vwap - a.profit.vwap);

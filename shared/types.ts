@@ -62,6 +62,16 @@ export interface LoopStep {
 	volumeHub: number;
 }
 
+/** How consistently a loop showed up across the hour buckets of the window. */
+export interface Recurrence {
+	/** hours in which the loop existed with VWAP profit > 0% */
+	hoursProfitable: number;
+	/** hours in the window (missing hours count against the loop) */
+	hoursTotal: number;
+	/** median of the per-hour VWAP profit multipliers over hours where the loop could be computed; null if never */
+	medianProfit: number | null;
+}
+
 export interface Loop {
 	itemId: string;
 	name: string;
@@ -83,6 +93,8 @@ export interface Loop {
 	profit: { vwap: number; conservative: number; optimistic: number };
 	/** rough capacity: min(items traded on buy side, items traded on sell side) in the window */
 	capacityItems: number;
+	/** per-hour recurrence over the window; attached by the server, absent on loops computed from a single book */
+	recurrence?: Recurrence;
 }
 
 export interface LoopsResponse {
