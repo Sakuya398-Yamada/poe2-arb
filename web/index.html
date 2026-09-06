@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>poe2-arb — 通貨取引所 三角裁定</title>
+	<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+	<header class="top">
+		<h1>poe2-arb <span class="sub">通貨取引所 三角裁定ファインダー</span></h1>
+		<div class="controls">
+			<label>リーグ <select id="league"></select></label>
+			<label>ハブ <select id="hubs">
+				<option value="ex,div">高貴 ⇄ 神</option>
+				<option value="ex,chaos">高貴 ⇄ カオス</option>
+				<option value="chaos,div">カオス ⇄ 神</option>
+			</select></label>
+			<label>集計 <select id="hours">
+				<option value="1">直近1時間</option>
+				<option value="2">直近2時間</option>
+				<option value="3">直近3時間</option>
+				<option value="6">直近6時間</option>
+			</select></label>
+			<label>方向 <select id="dir">
+				<option value="both">両方向</option>
+				<option value="ab">A→アイテム→B→A</option>
+				<option value="ba">B→アイテム→A→B</option>
+			</select></label>
+			<label>最低利益(VWAP) <input id="minProfit" type="number" value="0" step="1" style="width:4em" />%</label>
+			<label>最低取引数 <input id="minCap" type="number" value="10" step="1" min="0" style="width:4.5em" /></label>
+			<label>検索 <input id="q" type="search" placeholder="item name" /></label>
+			<button id="refresh">更新</button>
+		</div>
+	</header>
+
+	<section id="status" class="status">読み込み中…</section>
+
+	<main>
+		<div class="tablewrap">
+			<table id="tbl">
+				<thead>
+					<tr>
+						<th>#</th>
+						<th data-sort="name">アイテム</th>
+						<th>ルート</th>
+						<th data-sort="buy" title="A通貨での買値(1個あたり)。約定量加重平均 (最悪〜最良)">買い</th>
+						<th data-sort="sell" title="B通貨での売値(1個あたり)。約定量加重平均 (最悪〜最良)">売り</th>
+						<th title="B→Aの換算レート。約定量加重平均 (最悪〜最良)">換算</th>
+						<th data-sort="vwap" class="sorted" title="全工程を約定量加重平均レシオ(VWAP)で計算。最も現実に近い推定">利益(VWAP)</th>
+						<th data-sort="cons" title="全工程を不利な側の極端値で計算。1件の変な約定で大きく振れる下限">利益(保守)</th>
+						<th data-sort="opt" title="全工程を有利な側の極端値で計算。上限">利益(楽観)</th>
+						<th data-sort="cap" title="min(買い側の約定数, 売り側の約定数)。括弧内は買い側/売り側の約定数と、売り側で動いたハブ通貨の量。売り側が薄いループは再現性が低い">取引数</th>
+					</tr>
+				</thead>
+				<tbody></tbody>
+			</table>
+		</div>
+		<aside id="detail" class="detail" hidden></aside>
+	</main>
+
+	<footer>
+		データ: GGG公式 Currency Exchange API(1時間ごとの約定集計・約5分遅延・完了した時間のみ)。板の現在値ではないので、実行前にゲーム内で必ずレシオを確認してね。ゴールド手数料は含んでいない。名前: RePoE (PoE2)。
+	</footer>
+
+	<script type="module" src="./main.ts"></script>
+</body>
+</html>

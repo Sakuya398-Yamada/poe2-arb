@@ -1,0 +1,104 @@
+// Shared between server and web. No runtime deps.
+
+/** Hub currencies the loops pivot on. */
+export type Hub = 'ex' | 'div' | 'chaos';
+
+export const HUB_IDS: Record<Hub, string> = {
+	ex: 'Metadata/Items/Currency/CurrencyAddModToRare',
+	div: 'Metadata/Items/Currency/CurrencyModValues',
+	chaos: 'Metadata/Items/Currency/CurrencyRerollRare',
+};
+
+export const HUB_LABEL: Record<Hub, { en: string; ja: string; short: string }> = {
+	ex: { en: 'Exalted Orb', ja: '高貴なオーブ', short: 'ex' },
+	div: { en: 'Divine Orb', ja: '神のオーブ', short: 'div' },
+	chaos: { en: 'Chaos Orb', ja: 'カオスオーブ', short: 'c' },
+};
+
+/** One market as returned by GGG's hourly Currency Exchange feed. */
+export interface GggMarket {
+	league: string;
+	market_id: string;
+	market_pair: [string, string];
+	volume_traded: Record<string, number>;
+	lowest_stock: Record<string, number>;
+	highest_stock: Record<string, number>;
+	lowest_ratio: Record<string, number>;
+	highest_ratio: Record<string, number>;
+}
+
+export interface GggHour {
+	next_change_id: number;
+	markets: GggMarket[];
+}
+
+/** A closed interval [lo, hi]. */
+export interface Range {
+	lo: number;
+	hi: number;
+}
+
+/** Price of one unit of an item expressed in a hub currency, for one hub market. */
+export interface HubQuote {
+	hub: Hub;
+	/** hub units per 1 item, min..max over the observed trades (outlier-prone) */
+	price: Range;
+	/** volume-weighted average hub units per 1 item = volumeHub / volumeItems */
+	vwap: number;
+	/** items traded in the window */
+	volumeItems: number;
+	/** hub units traded in the window */
+	volumeHub: number;
+}
+
+export interface LoopStep {
+	hub: Hub;
+	/** hub units per item; worst = the side that hurts you, best = the side that helps you */
+	worst: number;
+	best: number;
+	/** volume-weighted average executed price */
+	vwap: number;
+	volumeItems: number;
+	volumeHub: number;
+}
+
+export interface Loop {
+	itemId: string;
+	name: string;
+	category: string;
+	/** absolute image URL (web.poecdn.com), missing when the trade site lists no icon for the item */
+	icon?: string;
+	/** loop starts and ends in `from`; passes through the item and `to` */
+	from: Hub;
+	to: Hub;
+	buy: LoopStep;
+	sell: LoopStep;
+	/** `from` units per 1 `to` unit (the hub→hub conversion at the end) */
+	convert: { worst: number; best: number; vwap: number };
+	/**
+	 * multiplier on the starting stack: 1.10 = +10%
+	 * vwap: every leg at its volume-weighted average executed price (best single estimate)
+	 * conservative / optimistic: every leg at the extreme that hurts / helps (bounds; single odd trades widen them a lot)
+	 */
+	profit: { vwap: number; conservative: number; optimistic: number };
+	/** rough capacity: min(items traded on buy side, items traded on sell side) in the window */
+	capacityItems: number;
+}
+
+export interface LoopsResponse {
+	league: string;
+	/** unix seconds of the first and last hour bucket included */
+	windowStart: number;
+	windowEnd: number;
+	hoursRequested: number;
+	hoursUsed: number;
+	generatedAt: number;
+	hubs: [Hub, Hub];
+	/** from-hub per 1 to-hub, e.g. ex per div */
+	hubRate: { worst: number; best: number; vwap: number } | null;
+	/** icon URLs of the hub currencies (same source as Loop.icon) */
+	hubIcons: Partial<Record<Hub, string>>;
+	loops: Loop[];
+	/** items that had a market in only one hub (no loop possible) — for transparency */
+	skipped: number;
+}
