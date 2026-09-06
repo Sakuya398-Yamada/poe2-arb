@@ -23,7 +23,7 @@ npm run typecheck
 | 何 | どこから | 備考 |
 |---|---|---|
 | 約定データ | `GET https://web.poecdn.com/api/currency-exchange/poe2/<unixHour>` | GGG公式・認証不要。**完了した1時間**の全ペアの集計。約5分遅延。`markets` が空 = その時間はまだ無い |
-| アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存 |
+| アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存。取得に失敗しても一覧は止めず、IDの末尾(例: `CurrencyAddModToRare`)を名前として表示し10分後に再試行 |
 | アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/icons.json` に保存し1日1回更新 |
 
 GGGのレコード(1ペア1時間)は次の形:
