@@ -9,10 +9,12 @@ const minProfit = $<HTMLInputElement>('#minProfit');
 const minCap = $<HTMLInputElement>('#minCap');
 const q = $<HTMLInputElement>('#q');
 const status = $<HTMLElement>('#status');
+const tbl = $<HTMLTableElement>('#tbl');
 const tbody = $<HTMLTableSectionElement>('#tbl tbody');
 const detail = $<HTMLElement>('#detail');
 
-type SortKey = 'name' | 'buy' | 'sell' | 'vwap' | 'cons' | 'opt' | 'cap';
+type SortKey = 'name' | 'buy' | 'sell' | 'vwap' | 'cons' | 'opt' | 'cap' | 'rec' | 'med';
+const RECURRENCE_KEYS: SortKey[] = ['rec', 'med'];
 let sortKey: SortKey = 'vwap';
 let sortDesc = true;
 let data: LoopsResponse | null = null;
@@ -36,6 +38,17 @@ function trim(n: number): string {
 }
 
 function loopKey(l: Loop) { return `${l.from}>${l.itemId}>${l.to}`; }
+
+const recRatio = (l: Loop) => (l.recurrence ? l.recurrence.hoursProfitable / l.recurrence.hoursTotal : 0);
+const recText = (l: Loop) => (l.recurrence ? `${l.recurrence.hoursProfitable}/${l.recurrence.hoursTotal}` : '—');
+const medText = (l: Loop) => (l.recurrence?.medianProfit != null ? pct(l.recurrence.medianProfit) : '—');
+const medCls = (l: Loop) => (l.recurrence?.medianProfit != null ? cls(l.recurrence.medianProfit) : '');
+
+function setSort(k: SortKey, desc: boolean) {
+	sortKey = k; sortDesc = desc;
+	document.querySelectorAll('th.sorted').forEach((e) => e.classList.remove('sorted'));
+	document.querySelector(`th[data-sort="${k}"]`)?.classList.add('sorted');
+}
 
 /**
  * Item / hub icon. Images come straight from web.poecdn.com (signed URLs the server got from the trade site);
@@ -93,6 +106,9 @@ async function load() {
 		const j = await r.json();
 		if (!r.ok) throw new Error(j.error ?? r.statusText);
 		data = j as LoopsResponse;
+		// With a single hour the recurrence columns are hidden; don't keep sorting by an invisible column.
+		tbl.classList.toggle('single', data.hoursUsed < 2);
+		if (data.hoursUsed < 2 && RECURRENCE_KEYS.includes(sortKey)) setSort('vwap', true);
 		renderStatus();
 		render();
 	} catch (e) {
@@ -128,6 +144,7 @@ function filtered(): Loop[] {
 	const key = (l: Loop): number | string => ({
 		name: l.name, buy: l.buy.vwap, sell: l.sell.vwap,
 		vwap: l.profit.vwap, cons: l.profit.conservative, opt: l.profit.optimistic, cap: l.capacityItems,
+		rec: recRatio(l), med: l.recurrence?.medianProfit ?? 0,
 	})[sortKey];
 	rows = rows.sort((x, y) => {
 		const kx = key(x), ky = key(y);
@@ -153,11 +170,13 @@ function render() {
 			`<td class="num ${cls(l.profit.vwap)}"><b>${pct(l.profit.vwap)}</b></td>` +
 			`<td class="num ${cls(l.profit.conservative)}">${pct(l.profit.conservative)}</td>` +
 			`<td class="num ${cls(l.profit.optimistic)}">${pct(l.profit.optimistic)}</td>` +
-			`<td class="num">${l.capacityItems} <span class="rng">(買${l.buy.volumeItems} / 売${l.sell.volumeItems} = ${l.sell.volumeHub} ${hubShort(l.sell.hub)})</span></td>`;
+			`<td class="num">${l.capacityItems} <span class="rng">(買${l.buy.volumeItems} / 売${l.sell.volumeItems} = ${l.sell.volumeHub} ${hubShort(l.sell.hub)})</span></td>` +
+			`<td class="num rec">${recText(l)}</td>` +
+			`<td class="num rec ${medCls(l)}">${medText(l)}</td>`;
 		tr.addEventListener('click', () => { selected = loopKey(l); renderDetail(l); render(); });
 		tbody.append(tr);
 	});
-	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="10" class="l">条件に合うループなし</td></tr>';
+	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="12" class="l">条件に合うループなし</td></tr>';
 }
 
 function renderDetail(l: Loop) {
@@ -180,6 +199,9 @@ function renderDetail(l: Loop) {
 		`<p><span class="k">VWAPでの試算 (${start} ${hubShort(l.from)} 開始):</span><br>` +
 		`${start} ${hubShort(l.from)} → ${trim(items)} 個 → ${trim(got)} ${hubShort(l.to)} → <b class="${cls(l.profit.vwap)}">${trim(back)} ${hubShort(l.from)}</b> (${pct(l.profit.vwap)})</p>` +
 		`<p class="k">保守(極端値) ${pct(l.profit.conservative)} ／ 楽観(極端値) ${pct(l.profit.optimistic)}<br>取引数の目安: ${l.capacityItems} 個/窓</p>` +
+		(l.recurrence && l.recurrence.hoursTotal >= 2
+			? `<p class="k">再現性: ${l.recurrence.hoursTotal} 時間中 <b>${l.recurrence.hoursProfitable}</b> 時間で利益あり ／ 各時間の VWAP 利益の中央値 <b class="${medCls(l)}">${medText(l)}</b></p>`
+			: '') +
 		`<p class="k">※ 完了した直近1時間の「約定」の集計であって、今の板ではない。VWAPは約定量で加重した平均、幅(保守/楽観)は1件の変な約定でも大きく振れる。実行前にゲーム内でAltキーを押して競合注文を確認。</p>`;
 }
 
@@ -195,9 +217,7 @@ function esc(s: string) {
 for (const th of document.querySelectorAll<HTMLTableCellElement>('th[data-sort]')) {
 	th.addEventListener('click', () => {
 		const k = th.dataset.sort as SortKey;
-		if (k === sortKey) sortDesc = !sortDesc; else { sortKey = k; sortDesc = k !== 'name'; }
-		document.querySelectorAll('th.sorted').forEach((e) => e.classList.remove('sorted'));
-		th.classList.add('sorted');
+		setSort(k, k === sortKey ? !sortDesc : k !== 'name');
 		render();
 	});
 }

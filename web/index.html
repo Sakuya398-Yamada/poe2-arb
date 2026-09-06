@@ -51,6 +51,8 @@
 						<th data-sort="cons" title="全工程を不利な側の極端値で計算。1件の変な約定で大きく振れる下限">利益(保守)</th>
 						<th data-sort="opt" title="全工程を有利な側の極端値で計算。上限">利益(楽観)</th>
 						<th data-sort="cap" title="min(買い側の約定数, 売り側の約定数)。括弧内は買い側/売り側の約定数と、売り側で動いたハブ通貨の量。売り側が薄いループは再現性が低い">取引数</th>
+						<th data-sort="rec" class="rec" title="集計窓の各時間のうち、そのループが VWAP 利益ありで出現した時間数 / 対象時間数。片側の市場に約定が無い時間は出現なし扱い">再現</th>
+						<th data-sort="med" class="rec" title="ループが算出できた各時間の VWAP 利益の中央値。1時間だけ突出したノイズに引きずられない">利益(中央値)</th>
 					</tr>
 				</thead>
 				<tbody></tbody>
