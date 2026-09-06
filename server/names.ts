@@ -59,10 +59,16 @@ export async function loadNames(fetchImpl: typeof fetch = fetch): Promise<NameMa
 	return map;
 }
 
-export function makeResolver(map: NameMap, iconFor: (art: string) => string | undefined = () => undefined) {
-	return (id: string): NameEntry & { icon?: string } => {
+/** `jaFor` is keyed by the English name (RePoE `name` == trade-site EN `text`), see trade.ts for why not by art. */
+export function makeResolver(
+	map: NameMap,
+	iconFor: (art: string) => string | undefined = () => undefined,
+	jaFor: (name: string) => string | undefined = () => undefined,
+) {
+	return (id: string): NameEntry & { icon?: string; ja?: string } => {
 		const e = map[id] ?? { name: id.split('/').pop() ?? id, category: categoryOf(id, '') };
 		const icon = e.art ? iconFor(e.art) : undefined;
-		return icon ? { ...e, icon } : { ...e };
+		const ja = jaFor(e.name);
+		return { ...e, ...(icon ? { icon } : {}), ...(ja ? { ja } : {}) };
 	};
 }

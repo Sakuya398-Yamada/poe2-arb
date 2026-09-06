@@ -98,6 +98,7 @@ export function computeLoop(
 	sellQ: HubQuote,
 	rate: HubRate, // from-units per 1 to-unit
 	icon?: string,
+	ja?: string,
 ): Loop {
 	const buy: LoopStep = { hub: buyQ.hub, worst: buyQ.price.hi, best: buyQ.price.lo, vwap: buyQ.vwap, volumeItems: buyQ.volumeItems, volumeHub: buyQ.volumeHub };
 	const sell: LoopStep = { hub: sellQ.hub, worst: sellQ.price.lo, best: sellQ.price.hi, vwap: sellQ.vwap, volumeItems: sellQ.volumeItems, volumeHub: sellQ.volumeHub };
@@ -105,6 +106,7 @@ export function computeLoop(
 	return {
 		itemId, name, category,
 		...(icon ? { icon } : {}),
+		...(ja ? { ja } : {}),
 		from: buyQ.hub, to: sellQ.hub,
 		buy, sell, convert,
 		profit: {
@@ -117,7 +119,7 @@ export function computeLoop(
 }
 
 export interface NameResolver {
-	(itemId: string): { name: string; category: string; icon?: string };
+	(itemId: string): { name: string; category: string; icon?: string; ja?: string };
 }
 
 /** All loops between the two hubs, both directions. Unsorted. */
@@ -129,9 +131,9 @@ export function findLoops(book: Book, hubA: Hub, hubB: Hub, resolve: NameResolve
 	for (const [itemId, quotes] of book.items) {
 		const qa = quotes[hubA], qb = quotes[hubB];
 		if (!qa || !qb) { skipped++; continue; }
-		const { name, category, icon } = resolve(itemId);
-		if (rateAB) loops.push(computeLoop(itemId, name, category, qa, qb, rateAB, icon)); // A→item→B→A
-		if (rateBA) loops.push(computeLoop(itemId, name, category, qb, qa, rateBA, icon)); // B→item→A→B
+		const { name, category, icon, ja } = resolve(itemId);
+		if (rateAB) loops.push(computeLoop(itemId, name, category, qa, qb, rateAB, icon, ja)); // A→item→B→A
+		if (rateBA) loops.push(computeLoop(itemId, name, category, qb, qa, rateBA, icon, ja)); // B→item→A→B
 	}
 	return { loops, skipped };
 }

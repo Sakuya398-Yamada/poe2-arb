@@ -68,6 +68,8 @@ export interface Loop {
 	category: string;
 	/** absolute image URL (web.poecdn.com), missing when the trade site lists no icon for the item */
 	icon?: string;
+	/** Japanese display name from the jp trade site's static data; missing when the item is not listed there */
+	ja?: string;
 	/** loop starts and ends in `from`; passes through the item and `to` */
 	from: Hub;
 	to: Hub;

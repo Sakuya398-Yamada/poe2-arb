@@ -102,6 +102,15 @@ describe('computeLoop / findLoops', () => {
 		expect(l.profit.conservative).toBeCloseTo(0.25 * (1 / 106) / (1 / 56));
 	});
 
+	it('passes the Japanese name and icon through to both loop directions, omitting absent keys', () => {
+		const book = buildBook([divEx, vaalEx, vaalDiv]);
+		const withJa = (id: string) => ({ ...resolve(id), ja: 'ヴァールオーブ' });
+		const { loops } = findLoops(book, 'ex', 'div', withJa);
+		expect(loops).toHaveLength(2);
+		for (const l of loops) { expect(l.ja).toBe('ヴァールオーブ'); expect('icon' in l).toBe(false); }
+		expect('ja' in findLoops(book, 'ex', 'div', resolve).loops[0]).toBe(false);
+	});
+
 	it('skips items quoted in only one hub', () => {
 		const book = buildBook([divEx, vaalEx]);
 		const r = findLoops(book, 'ex', 'div', resolve);

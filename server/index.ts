@@ -7,7 +7,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { buildBook, findLoops } from './arb.js';
 import { fetchWindow } from './ggg.js';
-import { loadIcons } from './icons.js';
+import { loadTradeStatic } from './trade.js';
 import { loadNames, makeResolver } from './names.js';
 import { HUB_IDS, type Hub, type LoopsResponse } from '../shared/types.js';
 
@@ -27,8 +27,8 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Promise<LoopsResponse> {
-	const [names, icons, win] = await Promise.all([loadNames(), loadIcons(), fetchWindow(league, hours)]);
-	const resolve = makeResolver(names, (art) => icons[art]);
+	const [names, trade, win] = await Promise.all([loadNames(), loadTradeStatic(), fetchWindow(league, hours)]);
+	const resolve = makeResolver(names, (art) => trade.icons[art], (name) => trade.ja[name]);
 	const book = buildBook(win.markets);
 	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve);
 	const hubIcons: LoopsResponse['hubIcons'] = {};
