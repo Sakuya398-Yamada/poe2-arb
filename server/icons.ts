@@ -16,7 +16,10 @@ const TTL_MS = 24 * 3600 * 1000;
 
 /** art path ("Art/2DItems/….dds") → absolute image URL */
 export type IconMap = Record<string, string>;
-interface CacheFile { fetchedAt: number; icons: IconMap }
+/** item name as shown on the trade site ("Exalted Orb") → trade-site id ("exalted"), used for trade2/exchange queries */
+export type TradeIdMap = Record<string, string>;
+export interface StaticMaps { icons: IconMap; tradeIds: TradeIdMap }
+interface CacheFile extends StaticMaps { fetchedAt: number }
 
 interface StaticData { result?: { id: string; entries?: { id: string; text: string; image?: string }[] }[] }
 
@@ -49,28 +52,47 @@ export function buildIconMap(data: StaticData): IconMap {
 	return map;
 }
 
+/**
+ * Trade-site ids keyed by display name. Names match RePoE's `name` exactly for every exchange-able item we checked
+ * (791/791 on 2026-09-07); art paths would not do, Greater/Perfect orbs share the base orb's image.
+ */
+export function buildTradeIdMap(data: StaticData): TradeIdMap {
+	const map: TradeIdMap = {};
+	for (const group of data.result ?? []) {
+		for (const e of group.entries ?? []) {
+			if (e.id === 'sep' || !e.text) continue; // 'sep' rows are UI separators
+			if (!map[e.text]) map[e.text] = e.id;
+		}
+	}
+	return map;
+}
+
 async function download(fetchImpl: typeof fetch): Promise<CacheFile> {
 	const res = await fetchImpl(URL, { headers: { 'User-Agent': 'poe2-arb/0.1', Accept: 'application/json' } });
 	if (!res.ok) throw new Error(`trade2 static: HTTP ${res.status}`);
-	const file: CacheFile = { fetchedAt: Date.now(), icons: buildIconMap((await res.json()) as StaticData) };
+	const data = (await res.json()) as StaticData;
+	const file: CacheFile = { fetchedAt: Date.now(), icons: buildIconMap(data), tradeIds: buildTradeIdMap(data) };
 	await mkdir(CACHE_DIR, { recursive: true });
 	await writeFile(CACHE_FILE, JSON.stringify(file));
 	return file;
 }
 
+const EMPTY: StaticMaps = { icons: {}, tradeIds: {} };
+
 /**
- * Icon map, refreshed at most once per TTL. Never throws: on a failed refresh the stale cache is kept
- * (and retried after RETRY_MS, not on every request); with no cache at all an empty map is returned,
- * so the UI just shows names without icons.
+ * Icon + trade-id maps, refreshed at most once per TTL. Never throws: on a failed refresh the stale cache is kept
+ * (and retried after RETRY_MS, not on every request); with no cache at all empty maps are returned,
+ * so the UI just shows names without icons and no reference prices.
  */
-export async function loadIcons(fetchImpl: typeof fetch = fetch): Promise<IconMap> {
-	if (Date.now() < nextRefreshAt) return cached?.icons ?? {};
+export async function loadStatic(fetchImpl: typeof fetch = fetch): Promise<StaticMaps> {
+	if (Date.now() < nextRefreshAt) return cached ?? EMPTY;
 	if (!cached) {
 		try { cached = JSON.parse(await readFile(CACHE_FILE, 'utf8')) as CacheFile; } catch { /* no cache yet */ }
 	}
-	if (cached && Date.now() - cached.fetchedAt < TTL_MS) {
+	// a cache written before tradeIds existed is refreshed right away
+	if (cached?.tradeIds && Date.now() - cached.fetchedAt < TTL_MS) {
 		nextRefreshAt = cached.fetchedAt + TTL_MS;
-		return cached.icons;
+		return cached;
 	}
 	try {
 		cached = await download(fetchImpl);
@@ -79,5 +101,9 @@ export async function loadIcons(fetchImpl: typeof fetch = fetch): Promise<IconMa
 		console.warn(`icons: refresh failed (${(e as Error).message}); ${cached ? 'using stale cache' : 'no icons'}`);
 		nextRefreshAt = Date.now() + RETRY_MS;
 	}
-	return cached?.icons ?? {};
+	return cached ?? EMPTY;
+}
+
+export async function loadIcons(fetchImpl: typeof fetch = fetch): Promise<IconMap> {
+	return (await loadStatic(fetchImpl)).icons;
 }

@@ -1,5 +1,6 @@
 // Local API + static server. No framework: node:http only.
 //   GET /api/loops?league=Forbidden%20Rites&hours=1&hubs=ex,div
+//   GET /api/reference?league=…&hours=1&hubs=ex,div&loops=ex>Metadata/…>div,…   (≤5 loops, trade-site listings)
 //   GET /api/leagues
 //   everything else → dist/ (built by `vite build`)
 import http from 'node:http';
@@ -7,9 +8,10 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { buildBook, findLoops } from './arb.js';
 import { fetchWindow } from './ggg.js';
-import { loadIcons } from './icons.js';
+import { loadIcons, loadStatic } from './icons.js';
 import { loadNames, makeResolver } from './names.js';
-import { HUB_IDS, type Hub, type LoopsResponse } from '../shared/types.js';
+import { fetchReference, type LoopRequest } from './trade.js';
+import { HUB_IDS, type Hub, type LoopsResponse, type ReferenceResponse } from '../shared/types.js';
 
 const PORT = Number(process.env.PORT ?? 8765);
 const DIST = path.resolve(process.cwd(), 'dist');
@@ -50,6 +52,31 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 	};
 }
 
+export const MAX_REFERENCE_LOOPS = 5;
+
+/** Trade-site reference prices for loops given as "from>itemId>to" keys of the current /api/loops result. */
+export async function reference(league: string, hours: number, hubs: [Hub, Hub], keys: string[]): Promise<ReferenceResponse> {
+	const [names, stat, res] = await Promise.all([loadNames(), loadStatic(), loops(league, hours, hubs)]);
+	const tradeId = (metaId: string): string | undefined => {
+		const name = names[metaId]?.name;
+		return name ? stat.tradeIds[name] : undefined;
+	};
+	const hubTradeId = (h: Hub): string => tradeId(HUB_IDS[h]) ?? h;
+	const reqs: LoopRequest[] = [];
+	const errors: string[] = [];
+	for (const key of keys) {
+		const l = res.loops.find((x) => `${x.from}>${x.itemId}>${x.to}` === key);
+		if (!l) { errors.push(`unknown loop: ${key}`); continue; }
+		reqs.push({
+			itemId: l.itemId, from: l.from, to: l.to,
+			item: tradeId(l.itemId), fromId: hubTradeId(l.from), toId: hubTradeId(l.to),
+			buyVwap: l.buy.vwap, sellVwap: l.sell.vwap, convertVwap: l.convert.vwap,
+		});
+	}
+	const r = await fetchReference(league, reqs);
+	return { league, fetchedAt: Math.floor(Date.now() / 1000), requests: r.requests, loops: r.loops, errors: [...errors, ...r.errors] };
+}
+
 async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
 	const url = new URL(req.url ?? '/', 'http://x');
 	let file = path.join(DIST, decodeURIComponent(url.pathname));
@@ -72,14 +99,19 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) 
 const server = http.createServer(async (req, res) => {
 	const url = new URL(req.url ?? '/', 'http://x');
 	try {
-		if (url.pathname === '/api/loops') {
+		if (url.pathname === '/api/loops' || url.pathname === '/api/reference') {
 			const league = url.searchParams.get('league') ?? DEFAULT_LEAGUE;
 			const hours = Math.min(24, Math.max(1, Number(url.searchParams.get('hours') ?? 1) || 1));
 			const hubs = (url.searchParams.get('hubs') ?? 'ex,div').split(',') as Hub[];
 			if (hubs.length !== 2 || !hubs.every((h) => HUBS.includes(h)) || hubs[0] === hubs[1]) {
 				return json(res, 400, { error: 'hubs must be two distinct of ex,div,chaos' });
 			}
-			return json(res, 200, await loops(league, hours, hubs as [Hub, Hub]));
+			if (url.pathname === '/api/loops') return json(res, 200, await loops(league, hours, hubs as [Hub, Hub]));
+			const keys = (url.searchParams.get('loops') ?? '').split(',').filter(Boolean);
+			if (keys.length === 0 || keys.length > MAX_REFERENCE_LOOPS) {
+				return json(res, 400, { error: `loops must list 1〜${MAX_REFERENCE_LOOPS} "from>itemId>to" keys` });
+			}
+			return json(res, 200, await reference(league, hours, hubs as [Hub, Hub], keys));
 		}
 		if (url.pathname === '/api/leagues') {
 			const win = await fetchWindow(DEFAULT_LEAGUE, 1);

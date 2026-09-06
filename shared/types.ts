@@ -102,3 +102,42 @@ export interface LoopsResponse {
 	/** items that had a market in only one hub (no loop possible) — for transparency */
 	skipped: number;
 }
+
+/**
+ * Best player listing on the official trade site (Bulk Item Exchange) for one loop leg.
+ * These are stash listings that need a whisper and a manual trade — not the in-game Currency Exchange book.
+ */
+export interface ReferenceLeg {
+	/** same orientation as the matching LoopStep / Loop.convert: hub units per 1 item, or from-units per 1 to-unit */
+	price: number;
+	/** units of the thing you receive that this one listing can supply */
+	stock: number;
+	/** listings left after dropping outliers (outside 1/3〜3× of the VWAP) */
+	offers: number;
+	/** listings returned before filtering */
+	listed: number;
+}
+
+export interface LoopReference {
+	itemId: string;
+	from: Hub;
+	to: Hub;
+	buy: ReferenceLeg | null;
+	sell: ReferenceLeg | null;
+	convert: ReferenceLeg | null;
+	/** multiplier like Loop.profit, from the best listing of every leg; null when any leg is missing */
+	profit: number | null;
+	/** why something is missing (no trade-site id, no listing in range, fetch error) */
+	note?: string;
+}
+
+export interface ReferenceResponse {
+	league: string;
+	/** unix seconds when the (possibly cached) listings were assembled */
+	fetchedAt: number;
+	/** trade-site requests actually sent for this response (cache hits excluded) */
+	requests: number;
+	loops: LoopReference[];
+	/** fetch problems that left legs empty; the VWAP table is unaffected */
+	errors: string[];
+}
