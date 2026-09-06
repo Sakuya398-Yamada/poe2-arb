@@ -25,6 +25,7 @@ npm run typecheck
 | 約定データ | `GET https://web.poecdn.com/api/currency-exchange/poe2/<unixHour>` | GGG公式・認証不要。**完了した1時間**の全ペアの集計。約5分遅延。`markets` が空 = その時間はまだ無い |
 | アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存 |
 | アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/icons.json` に保存し1日1回更新 |
+| ゴールド手数料 | `https://poe2db.tw/us/Currency_Exchange` | ゲームデータ `CurrencyExchange.GoldPurchaseFee` の poe2db 表示(HTML 570KB)をアイテム名→gold にパース。`.cache/gold.json` に保存し週1回更新。取れなければ手数料「?」表示で続行 |
 
 GGGのレコード(1ペア1時間)は次の形:
 
@@ -75,10 +76,38 @@ profit = sell(to per item) × rate(from per to) / buy(from per item)
 **神側の市場は薄いことが多く、そこで数div分だけ良いレートの約定があるとVWAP利益が数百%になる**。
 それは嘘ではないが、その時間にその量しか捌けていないという意味なので、再現性は売り側の量で判断すること。
 
+### ゴールド手数料
+
+取引所は注文成立時に **「要求側(I want)のアイテム 1 個あたり固定のゴールド × 個数」** を取る、として見積もっている。
+
+- 出典: ゲームデータの `CurrencyExchange` テーブルにアイテムごとの `GoldPurchaseFee`(整数)がある([poe-tool-dev/dat-schema](https://github.com/poe-tool-dev/dat-schema))。
+  RePoE の PoE2 版はこの表を出力していないので、[poe2db の Currency Exchange ページ](https://poe2db.tw/us/Currency_Exchange)に表示されている値を使う(687 品目、2026-09-07 時点で 高貴 120 / カオス 160 / 神 800 / 変質 50 / ミラー 25000)。
+  第三者記事の「120 gold per exalt requested, 160 per chaos, 800 per divine」とも一致する。
+- **実機では未検証**(要求 10 個で 10 倍になるか、提供側に課金されないか、端数の丸め)。検証したら Issue #6 に記録する。
+- 手数料はレートや取引総額に依存しない固定値なので、レートの向きの取り違えのようなバグ源にはならない。
+
+ループ 1 周(アイテム 1 個)あたりの見積り:
+
+```
+fee = fee(item) × 1                                   # レグ1: item を要求
+    + fee(to)   × sell(to per item)                   # レグ2: to を要求
+    + fee(from) × sell(to per item) × rate(from per to) # レグ3: from を要求
+```
+
+環境変数 `POE2ARB_GOLD_PER_EX`(1 高貴あたりのゴールド。自分の感覚値)を設定すると、
+ハブ通貨換算した手数料を VWAP 利益から引いた **手数料込み利益** も出す:
+
+```
+profitAfterFee = profitVWAP − fee / goldPer(from) / buy(from per item)
+goldPer(div|chaos) = POE2ARB_GOLD_PER_EX × VWAP(ex per div|chaos)
+```
+
+ゴールドとハブ通貨の換算レートは外部から取っていない(ゴールドは取引できず、相場が存在しないため)。
+
 ## 制約(重要)
 
 - 板の現在値ではなく、**完了した直近1時間の約定の集計**。ゲーム内でAltキーで競合注文を見てから実行すること。
-- ゴールド手数料は考慮していない。
+- ゴールド手数料は「要求側 1 個あたり固定 × 個数」の見積りで、実機未検証(「計算 › ゴールド手数料」)。手数料込み利益は `POE2ARB_GOLD_PER_EX` を設定した時だけ出る。
 - アイテム名は英語(RePoEの `name`)。
 - poe.ninja は使っていない(1ペア分のレートしか公開していないため、三角裁定には不足)。
 - GGGのAPIは「be reasonable」方針なので、取得は1時間バケット単位でメモリキャッシュし、5分ポーリング。
@@ -90,6 +119,8 @@ server/index.ts   http サーバ。/api/loops, /api/leagues, dist/ 配信
 server/ggg.ts     GGG API 取得(最新の完了時間の探索・キャッシュ・N時間マージ)
 server/arb.ts     純粋関数: レシオ正規化・Book 構築・ループ計算
 server/names.ts   RePoE から名前解決
+server/icons.ts   公式トレード静的データからアイコンURL解決
+server/gold.ts    poe2db からゴールド手数料表を取得
 shared/types.ts   サーバ/フロント共通型
 web/              Vite + 素の TypeScript(依存なし)
 test/arb.test.ts  実データの値を使ったユニットテスト
@@ -101,6 +132,7 @@ test/arb.test.ts  実データの値を使ったユニットテスト
 
 - `hours`: 1〜24。複数時間はレシオ幅を広げ、量を足し合わせる
 - `hubs`: `ex,div` / `ex,chaos` / `chaos,div`(順不同、両方向のループが返る)
+- 各ループの `goldFee`(item / toHub / fromHub / total、gold/個)と `profit.afterFee`(`POE2ARB_GOLD_PER_EX` 設定時のみ)。レスポンス直下の `goldPerHub` は換算に使った 1 ハブあたりのゴールド
 
 ## 次にやると良さそうなこと
 
