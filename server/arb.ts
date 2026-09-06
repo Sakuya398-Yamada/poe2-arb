@@ -1,5 +1,5 @@
 // Pure arbitrage math. No I/O here so it can be unit-tested.
-import { HUB_IDS, type GggMarket, type Hub, type HubQuote, type Loop, type LoopStep, type Range } from '../shared/types.js';
+import { HUB_IDS, type GggMarket, type GoldFee, type Hub, type HubQuote, type Loop, type LoopStep, type Range } from '../shared/types.js';
 
 const ID_TO_HUB: Record<string, Hub> = Object.fromEntries(
 	(Object.entries(HUB_IDS) as [Hub, string][]).map(([h, id]) => [id, h]),
@@ -86,6 +86,25 @@ export function buildBook(markets: GggMarket[]): Book {
 	return { items, hubRates };
 }
 
+export interface GoldConfig {
+	/** gold charged per 1 unit when `itemId` is the requested side; undefined when unknown */
+	feeOf: (itemId: string) => number | undefined;
+	/** gold per 1 hub unit (for converting the fee into the loop's `from` currency); empty when not configured */
+	goldPerHub?: Partial<Record<Hub, number>>;
+}
+
+/**
+ * Gold fee for 1 item through the loop. Every leg charges fee(requested item) × units received:
+ *   leg 1 requests 1 item, leg 2 requests `to` (sell.vwap units), leg 3 requests `from` (sell.vwap × convert.vwap units).
+ * Uses VWAP quantities, so this is the fee matching `profit.vwap`.
+ */
+export function goldFeePerItem(feeItem: number, feeTo: number, feeFrom: number, sellVwap: number, convertVwap: number): GoldFee {
+	const item = feeItem;
+	const toHub = feeTo * sellVwap;
+	const fromHub = feeFrom * sellVwap * convertVwap;
+	return { item, toHub, fromHub, total: item + toHub + fromHub };
+}
+
 /**
  * Loop: start with `from`, buy item with `from`, sell item for `to`, convert `to` back to `from`.
  * multiplier = sellPrice(to per item) * rate(from per to) / buyPrice(from per item)
@@ -98,21 +117,37 @@ export function computeLoop(
 	sellQ: HubQuote,
 	rate: HubRate, // from-units per 1 to-unit
 	icon?: string,
+	gold?: GoldConfig,
 ): Loop {
 	const buy: LoopStep = { hub: buyQ.hub, worst: buyQ.price.hi, best: buyQ.price.lo, vwap: buyQ.vwap, volumeItems: buyQ.volumeItems, volumeHub: buyQ.volumeHub };
 	const sell: LoopStep = { hub: sellQ.hub, worst: sellQ.price.lo, best: sellQ.price.hi, vwap: sellQ.vwap, volumeItems: sellQ.volumeItems, volumeHub: sellQ.volumeHub };
 	const convert = { worst: rate.price.lo, best: rate.price.hi, vwap: rate.vwap };
+	const vwap = (sell.vwap * convert.vwap) / buy.vwap;
+
+	let goldFee: GoldFee | undefined;
+	let afterFee: number | undefined;
+	if (gold) {
+		const feeItem = gold.feeOf(itemId), feeTo = gold.feeOf(HUB_IDS[sell.hub]), feeFrom = gold.feeOf(HUB_IDS[buy.hub]);
+		if (feeItem !== undefined && feeTo !== undefined && feeFrom !== undefined) {
+			goldFee = goldFeePerItem(feeItem, feeTo, feeFrom, sell.vwap, convert.vwap);
+			const goldPerFrom = gold.goldPerHub?.[buy.hub];
+			// fee in `from` units per 1 item, divided by what 1 item costs in `from` = fee as a fraction of the stack
+			if (goldPerFrom) afterFee = vwap - goldFee.total / goldPerFrom / buy.vwap;
+		}
+	}
 	return {
 		itemId, name, category,
 		...(icon ? { icon } : {}),
 		from: buyQ.hub, to: sellQ.hub,
 		buy, sell, convert,
 		profit: {
-			vwap: (sell.vwap * convert.vwap) / buy.vwap,
+			vwap,
 			conservative: (sell.worst * convert.worst) / buy.worst,
 			optimistic: (sell.best * convert.best) / buy.best,
+			...(afterFee !== undefined ? { afterFee } : {}),
 		},
 		capacityItems: Math.min(buyQ.volumeItems, sellQ.volumeItems),
+		...(goldFee ? { goldFee } : {}),
 	};
 }
 
@@ -121,7 +156,7 @@ export interface NameResolver {
 }
 
 /** All loops between the two hubs, both directions. Unsorted. */
-export function findLoops(book: Book, hubA: Hub, hubB: Hub, resolve: NameResolver): { loops: Loop[]; skipped: number } {
+export function findLoops(book: Book, hubA: Hub, hubB: Hub, resolve: NameResolver, gold?: GoldConfig): { loops: Loop[]; skipped: number } {
 	const loops: Loop[] = [];
 	let skipped = 0;
 	const rateAB = book.hubRates.get(`${hubA}|${hubB}`); // A per B
@@ -130,8 +165,21 @@ export function findLoops(book: Book, hubA: Hub, hubB: Hub, resolve: NameResolve
 		const qa = quotes[hubA], qb = quotes[hubB];
 		if (!qa || !qb) { skipped++; continue; }
 		const { name, category, icon } = resolve(itemId);
-		if (rateAB) loops.push(computeLoop(itemId, name, category, qa, qb, rateAB, icon)); // A→item→B→A
-		if (rateBA) loops.push(computeLoop(itemId, name, category, qb, qa, rateBA, icon)); // B→item→A→B
+		if (rateAB) loops.push(computeLoop(itemId, name, category, qa, qb, rateAB, icon, gold)); // A→item→B→A
+		if (rateBA) loops.push(computeLoop(itemId, name, category, qb, qa, rateBA, icon, gold)); // B→item→A→B
 	}
 	return { loops, skipped };
+}
+
+/**
+ * Gold per 1 unit of each hub from a gold-per-Exalted setting, using the observed ex-per-hub VWAP for div/chaos.
+ * Hubs whose ex rate is missing from the book are left out (no afterFee for loops starting there).
+ */
+export function goldPerHubFromEx(goldPerEx: number, hubRates: Book['hubRates']): Partial<Record<Hub, number>> {
+	const out: Partial<Record<Hub, number>> = { ex: goldPerEx };
+	for (const h of ['div', 'chaos'] as const) {
+		const r = hubRates.get(`ex|${h}`); // ex per 1 h
+		if (r) out[h] = goldPerEx * r.vwap;
+	}
+	return out;
 }

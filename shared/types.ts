@@ -80,9 +80,32 @@ export interface Loop {
 	 * vwap: every leg at its volume-weighted average executed price (best single estimate)
 	 * conservative / optimistic: every leg at the extreme that hurts / helps (bounds; single odd trades widen them a lot)
 	 */
-	profit: { vwap: number; conservative: number; optimistic: number };
+	profit: {
+		vwap: number; conservative: number; optimistic: number;
+		/**
+		 * vwap minus the gold fee converted to `from` units: vwap - goldFee.total / goldPerHub[from] / buy.vwap.
+		 * Only present when the fee is known and POE2ARB_GOLD_PER_EX is set.
+		 */
+		afterFee?: number;
+	};
 	/** rough capacity: min(items traded on buy side, items traded on sell side) in the window */
 	capacityItems: number;
+	/** gold fee for pushing 1 item through the loop; missing when the item's fee is unknown */
+	goldFee?: GoldFee;
+}
+
+/**
+ * Gold fee estimate per 1 item bought. The exchange charges a fixed gold amount per unit of the *requested*
+ * ("I want") item (`GoldPurchaseFee` in the game data; see README), so each leg is fee(requested) × units received.
+ */
+export interface GoldFee {
+	/** leg 1: requesting the item — fee(item) × 1 */
+	item: number;
+	/** leg 2: requesting `to` — fee(to) × sell.vwap */
+	toHub: number;
+	/** leg 3: requesting `from` — fee(from) × sell.vwap × convert.vwap */
+	fromHub: number;
+	total: number;
 }
 
 export interface LoopsResponse {
@@ -98,6 +121,8 @@ export interface LoopsResponse {
 	hubRate: { worst: number; best: number; vwap: number } | null;
 	/** icon URLs of the hub currencies (same source as Loop.icon) */
 	hubIcons: Partial<Record<Hub, string>>;
+	/** gold per 1 hub unit used for `profit.afterFee`; empty unless POE2ARB_GOLD_PER_EX is set (div/chaos derived via hub rates) */
+	goldPerHub: Partial<Record<Hub, number>>;
 	loops: Loop[];
 	/** items that had a market in only one hub (no loop possible) — for transparency */
 	skipped: number;

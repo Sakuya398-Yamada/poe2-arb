@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBook, computeLoop, findLoops, pricePerUnit } from '../server/arb.js';
+import { buildBook, computeLoop, findLoops, goldFeePerItem, goldPerHubFromEx, pricePerUnit } from '../server/arb.js';
 import { HUB_IDS, type GggMarket } from '../shared/types.js';
 
 const EX = HUB_IDS.ex, DIV = HUB_IDS.div, CH = HUB_IDS.chaos;
@@ -124,5 +124,51 @@ describe('computeLoop / findLoops', () => {
 		const book = buildBook([chEx, vaalEx, vaalCh]);
 		const { loops } = findLoops(book, 'ex', 'chaos', resolve);
 		expect(loops).toHaveLength(2);
+	});
+});
+
+// GoldPurchaseFee per requested unit, from poe2db's Currency Exchange table (2026-09-07):
+//   Exalted 120, Chaos 160, Divine 800, Vaal 160
+const FEES: Record<string, number> = { [EX]: 120, [CH]: 160, [DIV]: 800, [VAAL]: 160 };
+const feeOf = (id: string) => FEES[id];
+
+describe('gold fee', () => {
+	const resolve = (id: string) => ({ name: id.split('/').pop()!, category: 'Currency' });
+	it('charges fee(requested) × units received on each leg', () => {
+		// 1 item sells for 0.02 div, 1 div = 100 ex: leg1 requests 1 vaal, leg2 requests 0.02 div, leg3 requests 2 ex
+		const f = goldFeePerItem(160, 800, 120, 0.02, 100);
+		expect(f.item).toBe(160);
+		expect(f.toHub).toBeCloseTo(16);
+		expect(f.fromHub).toBeCloseTo(240);
+		expect(f.total).toBeCloseTo(416);
+	});
+
+	it('attaches goldFee to loops and derives afterFee from the gold→from-hub rate', () => {
+		const book = buildBook([divEx, vaalEx, vaalDiv]);
+		const goldPerHub = { ex: 1000 };
+		const { loops } = findLoops(book, 'ex', 'div', resolve, { feeOf, goldPerHub });
+		const l = loops.find((x) => x.from === 'ex' && x.to === 'div')!;
+		const expected = goldFeePerItem(160, 800, 120, l.sell.vwap, l.convert.vwap);
+		expect(l.goldFee).toEqual(expected);
+		// fee (in ex) per item / cost (ex) per item = fraction of the stack lost to gold
+		expect(l.profit.afterFee).toBeCloseTo(l.profit.vwap - expected.total / 1000 / l.buy.vwap);
+		// reverse loop starts in div, whose gold rate is not configured → fee known but no afterFee
+		const r = loops.find((x) => x.from === 'div' && x.to === 'ex')!;
+		expect(r.goldFee).toEqual(goldFeePerItem(160, 120, 800, r.sell.vwap, r.convert.vwap));
+		expect(r.profit.afterFee).toBeUndefined();
+	});
+
+	it('omits goldFee when the item fee is unknown', () => {
+		const book = buildBook([divEx, vaalEx, vaalDiv]);
+		const { loops } = findLoops(book, 'ex', 'div', resolve, { feeOf: (id) => (id === VAAL ? undefined : FEES[id]) });
+		expect(loops.every((l) => l.goldFee === undefined && l.profit.afterFee === undefined)).toBe(true);
+	});
+
+	it('goldPerHubFromEx scales div/chaos by the observed ex-per-hub VWAP', () => {
+		const book = buildBook([divEx]);
+		const g = goldPerHubFromEx(1000, book.hubRates);
+		expect(g.ex).toBe(1000);
+		expect(g.div).toBeCloseTo(1000 * (3372971 / 34366));
+		expect(g.chaos).toBeUndefined();
 	});
 });
