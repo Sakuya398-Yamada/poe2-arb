@@ -101,10 +101,11 @@ async function pace(): Promise<void> {
 	}
 }
 
-export async function fetchExchange(league: string, have: string[], want: string[], fetchImpl: typeof fetch = fetch): Promise<ExchangeResult> {
+/** `sent` says whether this call actually hit the network, so callers can report the real request count. */
+async function exchange(league: string, have: string[], want: string[], fetchImpl: typeof fetch): Promise<{ data: ExchangeResult; sent: boolean }> {
 	const key = `${league}|${have.join(',')}|${want.join(',')}`;
 	const hit = cache.get(key);
-	if (hit && Date.now() - hit.at < TTL_MS) return hit.data;
+	if (hit && Date.now() - hit.at < TTL_MS) return { data: hit.data, sent: false };
 	if (Date.now() < blockedUntil) throw new Error(`trade2 exchange: rate limited, retry in ${Math.ceil((blockedUntil - Date.now()) / 1000)}s`);
 	await pace();
 	const res = await fetchImpl(`${BASE}/${encodeURIComponent(league)}`, {
@@ -120,7 +121,11 @@ export async function fetchExchange(league: string, have: string[], want: string
 	if (!res.ok) throw new Error(`trade2 exchange: HTTP ${res.status}`);
 	const data = parseExchange((await res.json()) as TradeResponse);
 	cache.set(key, { at: Date.now(), data });
-	return data;
+	return { data, sent: true };
+}
+
+export async function fetchExchange(league: string, have: string[], want: string[], fetchImpl: typeof fetch = fetch): Promise<ExchangeResult> {
+	return (await exchange(league, have, want, fetchImpl)).data;
 }
 
 /** What the caller knows about one loop: trade-site ids for every leg and the VWAPs used to reject outliers. */
@@ -128,10 +133,10 @@ export interface LoopRequest {
 	itemId: string;
 	from: Hub;
 	to: Hub;
-	/** trade-site ids ("exalted"); undefined when the item has no trade-site listing category */
+	/** trade-site ids ("exalted"); undefined when the trade site lists no such item or the id table is unavailable */
 	item?: string;
-	fromId: string;
-	toId: string;
+	fromId?: string;
+	toId?: string;
 	/** hub units per item / from-units per to-unit, same as Loop */
 	buyVwap: number;
 	sellVwap: number;
@@ -151,10 +156,9 @@ export async function fetchReference(league: string, reqs: LoopRequest[], fetchI
 	let requests = 0;
 	const query = async (have: string[], want: string[]): Promise<ExchangeResult | null> => {
 		try {
-			const before = cache.size;
-			const r = await fetchExchange(league, have, want, fetchImpl);
-			if (cache.size > before) requests++;
-			return r;
+			const { data, sent } = await exchange(league, have, want, fetchImpl);
+			if (sent) requests++;
+			return data;
 		} catch (e) {
 			const msg = (e as Error).message;
 			if (!errors.includes(msg)) errors.push(msg);
@@ -184,18 +188,21 @@ export async function fetchReference(league: string, reqs: LoopRequest[], fetchI
 		return out;
 	};
 
+	// A request missing any trade-site id cannot be asked about; say so instead of querying a made-up id.
+	const noteFor = (r: LoopRequest) => (!r.item ? 'トレードサイトに無いアイテム' : 'ハブ通貨のトレードサイトIDが未解決');
 	const out = new Map<LoopRequest, LoopReference>();
 	for (const r of reqs) {
-		out.set(r, { itemId: r.itemId, from: r.from, to: r.to, buy: null, sell: null, convert: null, profit: null, ...(r.item ? {} : { note: 'トレードサイトに無いアイテム' }) });
+		const askable = r.item && r.fromId && r.toId;
+		out.set(r, { itemId: r.itemId, from: r.from, to: r.to, buy: null, sell: null, convert: null, profit: null, ...(askable ? {} : { note: noteFor(r) }) });
 	}
 	const groups = new Map<string, LoopRequest[]>();
 	for (const r of reqs) {
-		if (!r.item) continue;
+		if (!r.item || !r.fromId || !r.toId) continue;
 		const k = `${r.from}|${r.to}`;
 		groups.set(k, [...(groups.get(k) ?? []), r]);
 	}
 	for (const group of groups.values()) {
-		const { fromId, toId } = group[0];
+		const fromId = group[0].fromId!, toId = group[0].toId!;
 		const items = [...new Set(group.map((r) => r.item!))];
 		const buys = await legOffers([fromId], items, items, 'want');
 		const sells = await legOffers(items, [toId], items, 'have');

@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { bestOffer, fetchExchange, fetchReference, parseExchange, resetTradeState, type Offer } from '../server/trade.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TTL_MS, bestOffer, fetchExchange, fetchReference, parseExchange, resetTradeState, type Offer } from '../server/trade.js';
 import { buildTradeIdMap } from '../server/icons.js';
 
 // Trimmed real response of POST /api/trade2/exchange/poe2/Forbidden%20Rites with have=[exalted], want=[divine]
@@ -136,6 +136,32 @@ describe('fetchExchange / fetchReference', () => {
 		// buy: 1 truncated batch + 2 singles, sell: 1 truncated batch + 2 singles, convert: 1
 		expect(calls).toHaveLength(7);
 		expect(calls.slice(1, 3).map((c) => c.body.query.want)).toEqual([['vaal'], ['chance']]);
+	});
+
+	it('counts a refetch after the cache expires, not just the first one', async () => {
+		calls.length = 0;
+		vi.useFakeTimers();
+		try {
+			const loop = { itemId: 'a', from: 'ex' as const, to: 'div' as const, item: 'vaal', fromId: 'exalted', toId: 'divine', buyVwap: 2, sellVwap: 1 / 40, convertVwap: 100 };
+			expect((await fetchReference('TTL League', [loop], stub)).requests).toBe(3);
+			expect((await fetchReference('TTL League', [loop], stub)).requests).toBe(0); // served from cache
+			vi.setSystemTime(Date.now() + TTL_MS + 1);
+			expect((await fetchReference('TTL League', [loop], stub)).requests).toBe(3); // cache expired: really sent again
+			expect(calls).toHaveLength(6);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('does not query made-up ids when a trade-site id is missing', async () => {
+		calls.length = 0;
+		const r = await fetchReference('Unknown League', [
+			{ itemId: 'a', from: 'ex', to: 'div', item: undefined, fromId: 'exalted', toId: 'divine', buyVwap: 1, sellVwap: 1, convertVwap: 1 },
+			{ itemId: 'b', from: 'ex', to: 'div', item: 'vaal', fromId: undefined, toId: undefined, buyVwap: 1, sellVwap: 1, convertVwap: 1 },
+		], stub);
+		expect(calls).toHaveLength(0);
+		expect(r.requests).toBe(0);
+		expect(r.loops.map((l) => l.note)).toEqual(['トレードサイトに無いアイテム', 'ハブ通貨のトレードサイトIDが未解決']);
 	});
 
 	it('never throws: a failing query leaves legs empty and reports the error', async () => {

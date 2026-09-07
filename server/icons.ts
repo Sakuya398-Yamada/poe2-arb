@@ -77,7 +77,8 @@ async function download(fetchImpl: typeof fetch): Promise<CacheFile> {
 	return file;
 }
 
-const EMPTY: StaticMaps = { icons: {}, tradeIds: {} };
+/** A cache file written before tradeIds existed has no such key; never hand that shape out as StaticMaps. */
+const asMaps = (c: CacheFile | null): StaticMaps => (c?.tradeIds ? c : { icons: c?.icons ?? {}, tradeIds: {} });
 
 /**
  * Icon + trade-id maps, refreshed at most once per TTL. Never throws: on a failed refresh the stale cache is kept
@@ -85,7 +86,7 @@ const EMPTY: StaticMaps = { icons: {}, tradeIds: {} };
  * so the UI just shows names without icons and no reference prices.
  */
 export async function loadStatic(fetchImpl: typeof fetch = fetch): Promise<StaticMaps> {
-	if (Date.now() < nextRefreshAt) return cached ?? EMPTY;
+	if (Date.now() < nextRefreshAt) return asMaps(cached);
 	if (!cached) {
 		try { cached = JSON.parse(await readFile(CACHE_FILE, 'utf8')) as CacheFile; } catch { /* no cache yet */ }
 	}
@@ -101,7 +102,7 @@ export async function loadStatic(fetchImpl: typeof fetch = fetch): Promise<Stati
 		console.warn(`icons: refresh failed (${(e as Error).message}); ${cached ? 'using stale cache' : 'no icons'}`);
 		nextRefreshAt = Date.now() + RETRY_MS;
 	}
-	return cached ?? EMPTY;
+	return asMaps(cached);
 }
 
 export async function loadIcons(fetchImpl: typeof fetch = fetch): Promise<IconMap> {

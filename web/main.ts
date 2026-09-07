@@ -22,7 +22,10 @@ let selected: string | null = null;
 /** trade-site reference prices, keyed by loopKey; only the loops fetched last time */
 let ref: ReferenceResponse | null = null;
 const refByKey = new Map<string, LoopReference>();
+/** league + window the prices above were fetched for — they must not be shown against another one */
+let refCtx = '';
 const REF_LOOPS = 5;
+const ctx = () => `${leagueSel.value}|${hoursSel.value}`;
 
 const pct = (m: number) => `${m >= 1 ? '+' : ''}${((m - 1) * 100).toFixed(1)}%`;
 const cls = (m: number) => (m > 1 ? 'pos' : m < 1 ? 'neg' : '');
@@ -92,6 +95,7 @@ async function loadLeagues() {
 
 async function load() {
 	persist();
+	if (refCtx !== ctx()) refStatus.textContent = ''; // prices from another league/window no longer apply
 	status.innerHTML = '読み込み中…';
 	const p = new URLSearchParams({ league: leagueSel.value, hours: hoursSel.value, hubs: hubsSel.value });
 	try {
@@ -119,6 +123,7 @@ async function loadRef() {
 		if (!res.ok) throw new Error(`HTTP ${res.status}: ${((await res.json()) as { error?: string }).error ?? ''}`);
 		ref = (await res.json()) as ReferenceResponse;
 		refByKey.clear();
+		refCtx = ctx();
 		for (const r of ref.loops) refByKey.set(`${r.from}>${r.itemId}>${r.to}`, r);
 		const err = ref.errors.length ? ` <span class="err">${esc(ref.errors.join(' / '))}</span>` : '';
 		refStatus.innerHTML = `出品相場 ${fmtTime(ref.fetchedAt)} 取得 (${ref.loops.length} ループ, ${ref.requests} リクエスト)${err}`;
@@ -133,7 +138,7 @@ async function loadRef() {
 
 /** "出品相場" cell: reference profit for fetched loops, a note when a leg is missing, blank otherwise */
 function refCell(l: Loop): string {
-	const r = refByKey.get(loopKey(l));
+	const r = refCtx === ctx() ? refByKey.get(loopKey(l)) : undefined;
 	if (!r) return '<td class="num ref"></td>';
 	if (r.profit === null) return `<td class="num ref"><span class="k">${esc(r.note ?? '—')}</span></td>`;
 	return `<td class="num ref ${cls(r.profit)}"><b>${pct(r.profit)}</b> <span class="rng">在庫 ${Math.min(r.buy!.stock, r.sell!.stock)} 個</span></td>`;
@@ -212,7 +217,7 @@ function renderDetail(l: Loop) {
 	const items = start / l.buy.vwap;
 	const got = items * l.sell.vwap;
 	const back = got * l.convert.vwap;
-	const r = refByKey.get(loopKey(l));
+	const r = refCtx === ctx() ? refByKey.get(loopKey(l)) : undefined;
 	const refHtml = !r
 		? `<p class="k ref">出品相場: 未取得（「出品相場を取得」で上位 ${REF_LOOPS} ループ分を取得）</p>`
 		: `<h3>出品相場 <span class="k">(トレードサイトのプレイヤー出品・手渡し取引)</span></h3>` +

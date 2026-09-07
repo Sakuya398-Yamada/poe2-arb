@@ -56,20 +56,19 @@ export const MAX_REFERENCE_LOOPS = 5;
 
 /** Trade-site reference prices for loops given as "from>itemId>to" keys of the current /api/loops result. */
 export async function reference(league: string, hours: number, hubs: [Hub, Hub], keys: string[]): Promise<ReferenceResponse> {
-	const [names, stat, res] = await Promise.all([loadNames(), loadStatic(), loops(league, hours, hubs)]);
+	const [names, statics, loopsRes] = await Promise.all([loadNames(), loadStatic(), loops(league, hours, hubs)]);
 	const tradeId = (metaId: string): string | undefined => {
 		const name = names[metaId]?.name;
-		return name ? stat.tradeIds[name] : undefined;
+		return name ? statics.tradeIds[name] : undefined;
 	};
-	const hubTradeId = (h: Hub): string => tradeId(HUB_IDS[h]) ?? h;
 	const reqs: LoopRequest[] = [];
 	const errors: string[] = [];
 	for (const key of keys) {
-		const l = res.loops.find((x) => `${x.from}>${x.itemId}>${x.to}` === key);
+		const l = loopsRes.loops.find((x) => `${x.from}>${x.itemId}>${x.to}` === key);
 		if (!l) { errors.push(`unknown loop: ${key}`); continue; }
 		reqs.push({
 			itemId: l.itemId, from: l.from, to: l.to,
-			item: tradeId(l.itemId), fromId: hubTradeId(l.from), toId: hubTradeId(l.to),
+			item: tradeId(l.itemId), fromId: tradeId(HUB_IDS[l.from]), toId: tradeId(HUB_IDS[l.to]),
 			buyVwap: l.buy.vwap, sellVwap: l.sell.vwap, convertVwap: l.convert.vwap,
 		});
 	}
