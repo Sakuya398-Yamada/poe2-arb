@@ -25,10 +25,16 @@ const RETRY_MS = 10 * 60 * 1000;
 export type IconMap = Record<string, string>;
 /** English item name (trade site `text`, same as RePoE `name`) → Japanese item name */
 export type JaNameMap = Record<string, string>;
-export interface TradeStatic { icons: IconMap; ja: JaNameMap }
+export interface TradeStatic {
+	icons: IconMap;
+	ja: JaNameMap;
+	/** true when the JP download failed and `ja` is carried over from the previous cache (or empty) */
+	jaStale: boolean;
+}
 interface CacheFile extends TradeStatic { v: number; fetchedAt: number }
 
-export interface StaticData { result?: { id: string; entries?: { id: string; text: string; image?: string }[] }[] }
+interface StaticEntry { id: string; text: string; image?: string }
+export interface StaticData { result?: { id: string; entries?: StaticEntry[] }[] }
 
 let cached: CacheFile | null = null;
 let nextRefreshAt = 0;
@@ -46,7 +52,7 @@ export function artOfImageUrl(image: string): string | undefined {
 	}
 }
 
-function* entries(data: StaticData): Generator<{ id: string; text: string; image?: string }> {
+function* entries(data: StaticData): Generator<StaticEntry> {
 	for (const group of data.result ?? []) for (const e of group.entries ?? []) yield e;
 }
 
@@ -78,29 +84,35 @@ async function fetchStatic(fetchImpl: typeof fetch, url: string): Promise<Static
 	return (await res.json()) as StaticData;
 }
 
-/** EN data is required (icons); a JP failure only costs the Japanese names, which fall back to the previous cache. */
+/**
+ * Combine a fresh EN download with the JP result. A JP failure only costs the Japanese names, which fall back
+ * to the previous cache (or none) and are flagged `jaStale` so the loader retries soon instead of after the TTL.
+ * Pure; exported for tests.
+ */
+export function mergeStatic(en: StaticData, jp: PromiseSettledResult<StaticData>, previous: TradeStatic | null): TradeStatic {
+	const icons = buildIconMap(en);
+	if (jp.status === 'fulfilled') return { icons, ja: buildJaNameMap(en, jp.value), jaStale: false };
+	return { icons, ja: previous?.ja ?? {}, jaStale: true };
+}
+
+/** EN data is required (icons); see mergeStatic for the JP failure case. */
 async function download(fetchImpl: typeof fetch, previous: CacheFile | null): Promise<CacheFile> {
 	const [en, jp] = await Promise.allSettled([fetchStatic(fetchImpl, URL_EN), fetchStatic(fetchImpl, URL_JP)]);
 	if (en.status === 'rejected') throw en.reason;
-	let ja: JaNameMap;
-	if (jp.status === 'fulfilled') {
-		ja = buildJaNameMap(en.value, jp.value);
-	} else {
-		console.warn(`trade: jp static failed (${(jp.reason as Error).message}); ${previous ? 'keeping previous Japanese names' : 'no Japanese names'}`);
-		ja = previous?.ja ?? {};
-	}
-	const file: CacheFile = { v: CACHE_VERSION, fetchedAt: Date.now(), icons: buildIconMap(en.value), ja };
+	if (jp.status === 'rejected') console.warn(`trade: jp static failed (${(jp.reason as Error).message}); ${previous ? 'keeping previous Japanese names' : 'no Japanese names'}`);
+	const file: CacheFile = { v: CACHE_VERSION, fetchedAt: Date.now(), ...mergeStatic(en.value, jp, previous) };
 	await mkdir(CACHE_DIR, { recursive: true });
 	await writeFile(CACHE_FILE, JSON.stringify(file));
 	return file;
 }
 
-const EMPTY: TradeStatic = { icons: {}, ja: {} };
+const EMPTY: TradeStatic = { icons: {}, ja: {}, jaStale: false };
 
 /**
  * Icon and Japanese-name maps, refreshed at most once per TTL. Never throws: on a failed refresh the stale
  * cache is kept (and retried after RETRY_MS, not on every request); with no cache at all empty maps are
- * returned, so the UI just shows English names without icons.
+ * returned, so the UI just shows English names without icons. A cache whose JP half is stale is also
+ * retried after RETRY_MS rather than waiting out the TTL.
  */
 export async function loadTradeStatic(fetchImpl: typeof fetch = fetch): Promise<TradeStatic> {
 	if (Date.now() < nextRefreshAt) return cached ?? EMPTY;
@@ -110,13 +122,13 @@ export async function loadTradeStatic(fetchImpl: typeof fetch = fetch): Promise<
 			if (c.v === CACHE_VERSION) cached = c;
 		} catch { /* no cache yet */ }
 	}
-	if (cached && Date.now() - cached.fetchedAt < TTL_MS) {
+	if (cached && !cached.jaStale && Date.now() - cached.fetchedAt < TTL_MS) {
 		nextRefreshAt = cached.fetchedAt + TTL_MS;
 		return cached;
 	}
 	try {
 		cached = await download(fetchImpl, cached);
-		nextRefreshAt = cached.fetchedAt + TTL_MS;
+		nextRefreshAt = cached.jaStale ? Date.now() + RETRY_MS : cached.fetchedAt + TTL_MS;
 	} catch (e) {
 		console.warn(`trade: refresh failed (${(e as Error).message}); ${cached ? 'using stale cache' : 'no icons / Japanese names'}`);
 		nextRefreshAt = Date.now() + RETRY_MS;

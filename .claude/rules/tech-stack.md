@@ -9,7 +9,7 @@
 | 言語 | TypeScript（`strict`、ESM、`NodeNext`） | Node.js 20 以上。`tsx` で直接実行し、サーバはトランスパイルしない |
 | フロントエンド | Vite + 素の TypeScript（フレームワーク無し） | `web/` 配下。DOM 直接操作。ビルド成果物は `dist/` |
 | バックエンド | `node:http` のみ（フレームワーク無し） | `server/index.ts`。`/api/*` と `dist/` の静的配信 |
-| DB | なし | GGG の1時間バケットはメモリキャッシュ。RePoE 名前表とアイコン表は `.cache/*.json` にファイルキャッシュ |
+| DB | なし | GGG の1時間バケットはメモリキャッシュ。RePoE 名前表とトレード静的データ表（アイコン URL・日本語名）は `.cache/*.json` にファイルキャッシュ |
 | 外部データ | GGG Currency Exchange API / RePoE (PoE2) / 公式トレード静的データ | 認証不要。詳細と URL は `README.md` の「データ源」 |
 | テスト | vitest | `npm test`。`test/arb.test.ts` は実データの値で検証しているので数値を勝手に変えない |
 | 型チェック | `tsc --noEmit` | `npm run typecheck`。リンターは未導入 |
@@ -23,7 +23,7 @@
 - OS: Windows 11 + Git Bash で動作実績あり（hooks も同環境で動作）。macOS / Linux でも動くはず
 - 必要ツール: git、Node.js 20+、`gh` CLI（ログイン済みであること）
 - 環境変数: `PORT`（既定 8765）、`POE2ARB_LEAGUE`（既定 `Forbidden Rites`）、`POE2ARB_UA`（User-Agent）
-- 初回起動時に RePoE（8MB）とトレード静的データ（180KB）をダウンロードして `.cache/` に保存する。`.cache/` は gitignore 済み
+- 初回起動時に RePoE（8MB）とトレード静的データ EN/JP（各 ~190KB）をダウンロードして `.cache/` に保存する。`.cache/` は gitignore 済み
 
 ## よく使うコマンド
 

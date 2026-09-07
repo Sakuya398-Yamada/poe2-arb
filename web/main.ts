@@ -129,7 +129,7 @@ function filtered(): Loop[] {
 		(dir === 'both' || (dir === 'ab' ? l.from === a && l.to === b : l.from === b && l.to === a)) &&
 		l.profit.vwap >= mp &&
 		l.capacityItems >= mc &&
-		(!s || l.name.toLowerCase().includes(s) || (l.ja?.toLowerCase().includes(s) ?? false) || l.category.toLowerCase().includes(s)),
+		(!s || l.name.toLowerCase().includes(s) || l.ja?.toLowerCase().includes(s) || l.category.toLowerCase().includes(s)),
 	);
 	const key = (l: Loop): number | string => ({
 		name: dispName(l), buy: l.buy.vwap, sell: l.sell.vwap,

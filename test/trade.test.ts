@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { artOfImageUrl, buildIconMap, buildJaNameMap } from '../server/trade.js';
+import { artOfImageUrl, buildIconMap, buildJaNameMap, mergeStatic } from '../server/trade.js';
 import { makeResolver } from '../server/names.js';
 
 // Real entry from https://www.pathofexile.com/api/trade2/data/static (2026-09-07). The base64 segment decodes to
@@ -37,6 +37,7 @@ describe('buildJaNameMap', () => {
 		{ id: 'transmute', text: 'Orb of Transmutation' },
 		{ id: 'greater-orb-of-transmutation', text: 'Greater Orb of Transmutation' },
 		{ id: 'only-en', text: 'Only In EN' },
+		{ id: 'empty', text: 'Empty In JP' },
 	] }] };
 	const jp = { result: [{ id: 'Currency', entries: [
 		{ id: 'exalted', text: '高貴なオーブ', image: EX_IMAGE },
@@ -44,7 +45,7 @@ describe('buildJaNameMap', () => {
 		{ id: 'greater-orb-of-transmutation', text: '変成のオーブ (上級)' },
 		{ id: 'empty', text: '' },
 	] }] };
-	it('joins EN and JP entries on id and keys by the English text', () => {
+	it('joins EN and JP entries on id and keys by the English text, skipping ids missing or empty in JP', () => {
 		expect(buildJaNameMap(en, jp)).toEqual({
 			'Exalted Orb': '高貴なオーブ',
 			'Orb of Transmutation': '変成のオーブ',
@@ -59,6 +60,22 @@ describe('buildJaNameMap', () => {
 	it('returns an empty map when either side has no entries', () => {
 		expect(buildJaNameMap(en, {})).toEqual({});
 		expect(buildJaNameMap({}, jp)).toEqual({});
+	});
+});
+
+describe('mergeStatic', () => {
+	const en = { result: [{ id: 'Currency', entries: [{ id: 'exalted', text: 'Exalted Orb', image: EX_IMAGE }] }] };
+	const jp = { result: [{ id: 'Currency', entries: [{ id: 'exalted', text: '高貴なオーブ' }] }] };
+	const icons = { [EX_ART]: 'https://web.poecdn.com' + EX_IMAGE };
+	it('builds both maps when JP succeeded', () => {
+		expect(mergeStatic(en, { status: 'fulfilled', value: jp }, null)).toEqual({ icons, ja: { 'Exalted Orb': '高貴なオーブ' }, jaStale: false });
+	});
+	it('keeps the previous Japanese names, flagged stale, when JP failed', () => {
+		const previous = { icons: {}, ja: { 'Exalted Orb': '前回' }, jaStale: false };
+		expect(mergeStatic(en, { status: 'rejected', reason: new Error('HTTP 503') }, previous)).toEqual({ icons, ja: { 'Exalted Orb': '前回' }, jaStale: true });
+	});
+	it('falls back to no Japanese names when JP failed and there is no previous cache', () => {
+		expect(mergeStatic(en, { status: 'rejected', reason: new Error('HTTP 503') }, null)).toEqual({ icons, ja: {}, jaStale: true });
 	});
 });
 
