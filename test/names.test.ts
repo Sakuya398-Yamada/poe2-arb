@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +12,10 @@ const RAW = {
 
 function okResponse(body: unknown): Response {
 	return { ok: true, status: 200, json: async () => body } as Response;
+}
+
+async function seedFile(file: string): Promise<void> {
+	await writeFile(file, 'not a directory');
 }
 
 describe('parseBaseItems', () => {
@@ -71,6 +75,15 @@ describe('createNameLoader', () => {
 
 		await load(fetchImpl);
 		expect(fetchImpl).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps the downloaded names when the cache file cannot be written', async () => {
+		// cacheFile under a path whose parent is a file -> mkdir/writeFile reject
+		const load = createNameLoader({ cacheFile: path.join(cacheFile, 'nested', 'names.json') });
+		await seedFile(cacheFile);
+		const names = await load(vi.fn<typeof fetch>().mockResolvedValue(okResponse(RAW)));
+		expect(names[EX_ID]?.name).toBe('Exalted Orb');
+		expect(warn.mock.calls[0]?.[0]).toContain('cache write failed');
 	});
 
 	it('serves the on-disk cache without fetching', async () => {

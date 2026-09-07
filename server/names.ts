@@ -70,8 +70,13 @@ export function createNameLoader(opts: NameLoaderOptions = {}) {
 		const res = await fetchImpl(URL, { headers: { 'User-Agent': 'poe2-arb/0.1' } });
 		if (!res.ok) throw new Error(`RePoE base_items: HTTP ${res.status}`);
 		const map = parseBaseItems((await res.json()) as RawBaseItems);
-		await mkdir(path.dirname(cacheFile), { recursive: true });
-		await writeFile(cacheFile, JSON.stringify({ v: CACHE_VERSION, items: map } satisfies CacheFile));
+		// A failed cache write only costs the next start-up a re-download; keep the names we already have.
+		try {
+			await mkdir(path.dirname(cacheFile), { recursive: true });
+			await writeFile(cacheFile, JSON.stringify({ v: CACHE_VERSION, items: map } satisfies CacheFile));
+		} catch (e) {
+			console.warn(`names: cache write failed (${(e as Error).message}); continuing without cache`);
+		}
 		return map;
 	}
 
