@@ -8,7 +8,7 @@ import path from 'node:path';
 import { buildBook, findLoops, goldPerHubFromEx, loopKey, scoreRecurrence } from './arb.js';
 import { fetchWindow } from './ggg.js';
 import { loadGoldFees } from './gold.js';
-import { loadIcons } from './icons.js';
+import { loadTradeStatic } from './trade.js';
 import { loadNames, makeResolver } from './names.js';
 import { HUB_IDS, type Hub, type LoopsResponse } from '../shared/types.js';
 
@@ -30,8 +30,8 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Promise<LoopsResponse> {
-	const [names, icons, goldFees, win] = await Promise.all([loadNames(), loadIcons(), loadGoldFees(), fetchWindow(league, hours)]);
-	const resolve = makeResolver(names, (art) => icons[art]);
+	const [names, trade, goldFees, win] = await Promise.all([loadNames(), loadTradeStatic(), loadGoldFees(), fetchWindow(league, hours)]);
+	const resolve = makeResolver(names, (art) => trade.icons[art], (name) => trade.ja[name]);
 	const book = buildBook(win.markets);
 	const goldPerHub = GOLD_PER_EX > 0 ? goldPerHubFromEx(GOLD_PER_EX, book.hubRates) : {};
 	const gold = { feeOf: (id: string) => { const n = names[id]?.name; return n === undefined ? undefined : goldFees[n]; }, goldPerHub };

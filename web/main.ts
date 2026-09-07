@@ -65,10 +65,16 @@ function icon(url: string | undefined, title: string, size: 'sm' | 'lg' = 'sm'):
 	return `<img class="icon ${size}" src="${esc(url)}" alt="" title="${esc(title)}" loading="lazy" decoding="async" onerror="this.classList.add('none');this.removeAttribute('src')">`;
 }
 const hubIcon = (h: Hub) => icon(data?.hubIcons[h], HUB_LABEL[h].en);
+/** Japanese name when the trade site has one, else the English name */
+const dispName = (l: Loop) => l.ja ?? l.name;
+/** Display name, with the English name in small type after it when the Japanese one is shown */
+function nameHtml(l: Loop): string {
+	return l.ja ? `${esc(l.ja)}<span class="en">${esc(l.name)}</span>` : esc(l.name);
+}
 /** "ex → item → div → ex" with icons */
 function route(l: Loop): string {
 	const hub = (h: Hub) => `<span class="hub">${hubIcon(h)}${hubShort(h)}</span>`;
-	return `${hub(l.from)} → <span class="hub">${icon(l.icon, l.name)}item</span> → ${hub(l.to)} → ${hub(l.from)}`;
+	return `${hub(l.from)} → <span class="hub">${icon(l.icon, dispName(l))}item</span> → ${hub(l.to)} → ${hub(l.from)}`;
 }
 
 function restore() {
@@ -148,10 +154,10 @@ function filtered(): Loop[] {
 		(dir === 'both' || (dir === 'ab' ? l.from === a && l.to === b : l.from === b && l.to === a)) &&
 		l.profit.vwap >= mp &&
 		l.capacityItems >= mc &&
-		(!s || l.name.toLowerCase().includes(s) || l.category.toLowerCase().includes(s)),
+		(!s || l.name.toLowerCase().includes(s) || l.ja?.toLowerCase().includes(s) || l.category.toLowerCase().includes(s)),
 	);
 	const key = (l: Loop): number | string => ({
-		name: l.name, buy: l.buy.vwap, sell: l.sell.vwap,
+		name: dispName(l), buy: l.buy.vwap, sell: l.sell.vwap,
 		vwap: l.profit.vwap, cons: l.profit.conservative, opt: l.profit.optimistic, cap: l.capacityItems,
 		// unknown fee / no gold rate sort to the bottom in both directions
 		fee: l.goldFee?.total ?? (sortDesc ? -Infinity : Infinity),
@@ -160,7 +166,7 @@ function filtered(): Loop[] {
 	})[sortKey];
 	rows = rows.sort((x, y) => {
 		const kx = key(x), ky = key(y);
-		const c = typeof kx === 'string' ? kx.localeCompare(ky as string) : kx - (ky as number);
+		const c = typeof kx === 'string' ? kx.localeCompare(ky as string, 'ja') : kx - (ky as number);
 		return sortDesc ? -c : c;
 	});
 	return rows;
@@ -174,7 +180,7 @@ function render() {
 		tr.className = 'row' + (loopKey(l) === selected ? ' sel' : '');
 		tr.innerHTML =
 			`<td class="num">${i + 1}</td>` +
-			`<td class="l"><span class="item">${icon(l.icon, l.name)}${esc(l.name)}</span><span class="cat">${esc(l.category)}</span></td>` +
+			`<td class="l"><span class="item">${icon(l.icon, dispName(l))}${nameHtml(l)}</span><span class="cat">${esc(l.category)}</span></td>` +
 			`<td class="l route">${route(l)}</td>` +
 			`<td class="num">${fmtPrice(l.buy.vwap, l.buy.hub)} <span class="rng">(${fmtPrice(l.buy.worst, l.buy.hub)}〜${fmtPrice(l.buy.best, l.buy.hub)})</span></td>` +
 			`<td class="num">${fmtPrice(l.sell.vwap, l.sell.hub)} <span class="rng">(${fmtPrice(l.sell.worst, l.sell.hub)}〜${fmtPrice(l.sell.best, l.sell.hub)})</span></td>` +
@@ -215,12 +221,12 @@ function renderDetail(l: Loop) {
 	detail.hidden = false;
 	detail.innerHTML =
 		`<button class="close" id="closeDetail" title="閉じる">×</button>` +
-		`<h2>${icon(l.icon, l.name, 'lg')}<span>${esc(l.name)}</span></h2>` +
+		`<h2>${icon(l.icon, dispName(l), 'lg')}<span>${nameHtml(l)}</span></h2>` +
 		`<div class="k">${esc(l.category)} ／ ${esc(l.itemId)}</div>` +
 		`<div class="route k">${route(l)}</div>` +
 		`<ol>` +
-		`<li><b>${hubIcon(l.from)}${from}</b> で <b>${icon(l.icon, l.name)}${esc(l.name)}</b> を買う<br><span class="k">平均約定:</span> <code>${fmtPrice(l.buy.vwap, l.buy.hub)}</code> / 個 <span class="k">(幅 ${fmtPrice(l.buy.worst, l.buy.hub)} 〜 ${fmtPrice(l.buy.best, l.buy.hub)})</span><br><span class="k">この窓の約定:</span> ${l.buy.volumeItems} 個 (${l.buy.volumeHub} ${hubShort(l.buy.hub)})</li>` +
-		`<li><b>${icon(l.icon, l.name)}${esc(l.name)}</b> を <b>${hubIcon(l.to)}${to}</b> で売る<br><span class="k">平均約定:</span> <code>${fmtPrice(l.sell.vwap, l.sell.hub)}</code> / 個 <span class="k">(幅 ${fmtPrice(l.sell.worst, l.sell.hub)} 〜 ${fmtPrice(l.sell.best, l.sell.hub)})</span><br><span class="k">この窓の約定:</span> ${l.sell.volumeItems} 個 (${l.sell.volumeHub} ${hubShort(l.sell.hub)})</li>` +
+		`<li><b>${hubIcon(l.from)}${from}</b> で <b>${icon(l.icon, dispName(l))}${esc(dispName(l))}</b> を買う<br><span class="k">平均約定:</span> <code>${fmtPrice(l.buy.vwap, l.buy.hub)}</code> / 個 <span class="k">(幅 ${fmtPrice(l.buy.worst, l.buy.hub)} 〜 ${fmtPrice(l.buy.best, l.buy.hub)})</span><br><span class="k">この窓の約定:</span> ${l.buy.volumeItems} 個 (${l.buy.volumeHub} ${hubShort(l.buy.hub)})</li>` +
+		`<li><b>${icon(l.icon, dispName(l))}${esc(dispName(l))}</b> を <b>${hubIcon(l.to)}${to}</b> で売る<br><span class="k">平均約定:</span> <code>${fmtPrice(l.sell.vwap, l.sell.hub)}</code> / 個 <span class="k">(幅 ${fmtPrice(l.sell.worst, l.sell.hub)} 〜 ${fmtPrice(l.sell.best, l.sell.hub)})</span><br><span class="k">この窓の約定:</span> ${l.sell.volumeItems} 個 (${l.sell.volumeHub} ${hubShort(l.sell.hub)})</li>` +
 		`<li><b>${hubIcon(l.to)}${to}</b> を <b>${hubIcon(l.from)}${from}</b> に戻す<br><span class="k">平均レート:</span> 1 ${hubShort(l.to)} = <code>${trim(l.convert.vwap)}</code> ${hubShort(l.from)} <span class="k">(幅 ${trim(l.convert.worst)} 〜 ${trim(l.convert.best)})</span></li>` +
 		`</ol>` +
 		`<p><span class="k">VWAPでの試算 (${start} ${hubShort(l.from)} 開始):</span><br>` +

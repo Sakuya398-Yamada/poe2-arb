@@ -44,7 +44,7 @@ async function download(fetchImpl: typeof fetch): Promise<CacheFile> {
 	return file;
 }
 
-/** Same refresh policy as icons.ts: stale cache is kept on failure, empty map when there is no cache at all. */
+/** Same refresh policy as trade.ts: stale cache is kept on failure, empty map when there is no cache at all. */
 export async function loadGoldFees(fetchImpl: typeof fetch = fetch): Promise<GoldFeeMap> {
 	if (Date.now() < nextRefreshAt) return cached?.fees ?? {};
 	if (!cached) {

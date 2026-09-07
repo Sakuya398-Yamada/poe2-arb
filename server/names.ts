@@ -58,7 +58,7 @@ export interface NameLoaderOptions {
 /**
  * Builds a name loader with its own cache state. The returned function never throws: when the cache is
  * missing and RePoE cannot be fetched it warns, returns an empty map (so makeResolver falls back to the
- * id's last path segment) and retries after RETRY_MS, not on every request — same policy as loadIcons.
+ * id's last path segment) and retries after RETRY_MS, not on every request — same policy as loadTradeStatic.
  */
 export function createNameLoader(opts: NameLoaderOptions = {}) {
 	const cacheFile = opts.cacheFile ?? path.join(CACHE_DIR, 'names.json');
@@ -101,10 +101,16 @@ export function createNameLoader(opts: NameLoaderOptions = {}) {
 
 export const loadNames = createNameLoader();
 
-export function makeResolver(map: NameMap, iconFor: (art: string) => string | undefined = () => undefined) {
-	return (id: string): NameEntry & { icon?: string } => {
+/** `jaFor` is keyed by the English name (RePoE `name` == trade-site EN `text`), see trade.ts for why not by art. */
+export function makeResolver(
+	map: NameMap,
+	iconFor: (art: string) => string | undefined = () => undefined,
+	jaFor: (name: string) => string | undefined = () => undefined,
+) {
+	return (id: string): NameEntry & { icon?: string; ja?: string } => {
 		const e = map[id] ?? { name: id.split('/').pop() ?? id, category: categoryOf(id, '') };
 		const icon = e.art ? iconFor(e.art) : undefined;
-		return icon ? { ...e, icon } : { ...e };
+		const ja = jaFor(e.name);
+		return { ...e, ...(icon ? { icon } : {}), ...(ja ? { ja } : {}) };
 	};
 }
