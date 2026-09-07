@@ -5,7 +5,7 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { buildBook, findLoops, goldPerHubFromEx } from './arb.js';
+import { buildBook, findLoops, goldPerHubFromEx, loopKey, scoreRecurrence } from './arb.js';
 import { fetchWindow } from './ggg.js';
 import { loadGoldFees } from './gold.js';
 import { loadIcons } from './icons.js';
@@ -36,6 +36,12 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 	const goldPerHub = GOLD_PER_EX > 0 ? goldPerHubFromEx(GOLD_PER_EX, book.hubRates) : {};
 	const gold = { feeOf: (id: string) => { const n = names[id]?.name; return n === undefined ? undefined : goldFees[n]; }, goldPerHub };
 	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve, gold);
+	// Recurrence: recompute loops per hour bucket (same cached data, no extra fetches) and count profitable hours.
+	const hourly = win.byBucket.map((h) => findLoops(buildBook(h.markets), hubs[0], hubs[1], resolve).loops);
+	const recurrence = scoreRecurrence(hourly);
+	for (const l of loops) {
+		l.recurrence = recurrence.get(loopKey(l)) ?? { hoursProfitable: 0, hoursTotal: hourly.length, medianProfit: null };
+	}
 	const hubIcons: LoopsResponse['hubIcons'] = {};
 	for (const h of HUBS) { const icon = resolve(HUB_IDS[h]).icon; if (icon) hubIcons[h] = icon; }
 	loops.sort((a, b) => b.profit.vwap - a.profit.vwap);

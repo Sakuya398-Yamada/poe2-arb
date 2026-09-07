@@ -59,6 +59,8 @@ td.route .hub, .detail .route .hub { display: inline-flex; align-items: center; 
 td.route .icon, .detail .route .icon { margin-right: 2px; }
 .detail li b { display: inline-flex; align-items: center; vertical-align: bottom; }
 td .rng { color: var(--muted); font-size: 11px; }
+/* recurrence columns only mean something with 2+ hours in the window */
+table.single .rec { display: none; }
 .pos { color: var(--good); }
 .neg { color: var(--bad); }
 tr.row { cursor: pointer; }
