@@ -46,6 +46,6 @@ Make confident architectural choices rather than presenting multiple options unl
 ## Project Context
 
 - Stack: TypeScript (strict, ESM/NodeNext, Node 20+). Server = `node:http` only, no framework. Front = Vite + vanilla TS (no framework). Tests = vitest. Zero runtime deps.
-- Layout: `server/` (index.ts = HTTP/API, ggg.ts = GGG feed fetch+cache, arb.ts = pure arbitrage math, names.ts = RePoE names, icons.ts = trade-site icon URLs), `shared/types.ts` (types shared with the front), `web/` (index.html, main.ts, style.css), `test/` (vitest). Spec/data sources/formulas live in `README.md`.
+- Layout: `server/` (index.ts = HTTP/API, ggg.ts = GGG feed fetch+cache, arb.ts = pure arbitrage math, names.ts = RePoE names, trade.ts = trade-site icon URLs + Japanese names), `shared/types.ts` (types shared with the front), `web/` (index.html, main.ts, style.css), `test/` (vitest). Spec/data sources/formulas live in `README.md`.
 - Domain: PoE2 Currency Exchange triangular arbitrage. Ratio direction (hub units per 1 item; `from` units per 1 `to` unit) is the main bug source — see `server/arb.ts:pricePerUnit` and `test/arb.test.ts` (values verified against live data).
 - Follow the conventions in `CLAUDE.md` and `.claude/rules/*.md`.

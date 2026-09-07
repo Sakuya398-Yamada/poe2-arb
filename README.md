@@ -24,7 +24,8 @@ npm run typecheck
 |---|---|---|
 | 約定データ | `GET https://web.poecdn.com/api/currency-exchange/poe2/<unixHour>` | GGG公式・認証不要。**完了した1時間**の全ペアの集計。約5分遅延。`markets` が空 = その時間はまだ無い |
 | アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存 |
-| アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/icons.json` に保存し1日1回更新 |
+| アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/trade.json` に保存し1日1回更新 |
+| 日本語アイテム名 | `GET https://jp.pathofexile.com/api/trade2/data/static` | 上と同じ構造の日本語版(190KB・認証不要)。`id` で英語版と結合し「英名 → 日本語名」の表を作って `.cache/trade.json` に同居させる |
 
 GGGのレコード(1ペア1時間)は次の形:
 
@@ -47,6 +48,15 @@ base64 部分には `{"f":"2DItems/Currency/…","scale":1,"realm":"poe2"}` の�
 名前ではなく RePoE の `visual_identity.dds_file` と突き合わせている(2026-09-07 時点で取引所に出ている 670 種のうち 661 種が一致。
 残りはピナクルキー・アイドル等で、アイコン無しの空枠になる)。
 画像はブラウザが poecdn から直接読む(サーバは中継しない)。
+
+### 日本語アイテム名
+
+公式トレードサイトの静的データは `jp.pathofexile.com` でも同じ構造で配信されていて、`text` だけが日本語になっている。
+英語版と日本語版を `id` で結合すると全 772 件が対応し、英語版の `text` は RePoE の `name` と 771/772 件一致するので、
+**英名をキーに** 日本語名を引く(アートパスでは変成のオーブ/上級/完全のように同じ画像を使う段階違いが衝突する)。
+2026-09-07 時点で取引所に出ていた 548 種(6時間・全ハブペア)のうち 540 種に日本語名が付く。
+残りはアイドル・ピナクルキー・一部のリネージジェムで、日本語版にも載っていないため英名のみで表示する。
+日本語版の取得に失敗しても英語版が取れていればアイコンは更新し、日本語名は前回のキャッシュを使い続ける。
 
 ## 計算
 
@@ -79,7 +89,7 @@ profit = sell(to per item) × rate(from per to) / buy(from per item)
 
 - 板の現在値ではなく、**完了した直近1時間の約定の集計**。ゲーム内でAltキーで競合注文を見てから実行すること。
 - ゴールド手数料は考慮していない。
-- アイテム名は英語(RePoEの `name`)。
+- アイテム名は公式トレードサイトの日本語名を主表示にし、英名(RePoEの `name`)を添える。日本語名が無いアイテムは英名のみ。
 - poe.ninja は使っていない(1ペア分のレートしか公開していないため、三角裁定には不足)。
 - GGGのAPIは「be reasonable」方針なので、取得は1時間バケット単位でメモリキャッシュし、5分ポーリング。
 
@@ -90,9 +100,11 @@ server/index.ts   http サーバ。/api/loops, /api/leagues, dist/ 配信
 server/ggg.ts     GGG API 取得(最新の完了時間の探索・キャッシュ・N時間マージ)
 server/arb.ts     純粋関数: レシオ正規化・Book 構築・ループ計算
 server/names.ts   RePoE から名前解決
+server/trade.ts   公式トレード静的データ(EN/JP)からアイコンURLと日本語名を解決
 shared/types.ts   サーバ/フロント共通型
 web/              Vite + 素の TypeScript(依存なし)
 test/arb.test.ts  実データの値を使ったユニットテスト
+test/trade.test.ts トレード静的データの変換と名前解決のテスト
 ```
 
 ## API
@@ -101,10 +113,10 @@ test/arb.test.ts  実データの値を使ったユニットテスト
 
 - `hours`: 1〜24。複数時間はレシオ幅を広げ、量を足し合わせる
 - `hubs`: `ex,div` / `ex,chaos` / `chaos,div`(順不同、両方向のループが返る)
+- 各ループの `name` は英名、`ja` は日本語名(無いときはキー自体が無い)、`icon` は画像URL(同上)
 
 ## 次にやると良さそうなこと
 
 - 公式トレードサイトの `trade2/exchange` の板(現在の注文)を足して「今すぐ成立するか」を判定する(POESESSID とレート制限の扱いが必要)
 - 数時間分の履歴で「毎時間出ている=再現性あり」ループをスコアリング
-- 日本語アイテム名(RePoE に翻訳が無いので別ソースが要る)
 - オーバーレイ化 / ゲーム内チャットへコピー
