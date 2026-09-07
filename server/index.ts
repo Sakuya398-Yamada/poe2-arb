@@ -10,7 +10,7 @@ import { buildBook, findLoops } from './arb.js';
 import { fetchWindow } from './ggg.js';
 import { loadIcons, loadStatic } from './icons.js';
 import { loadNames, makeResolver } from './names.js';
-import { fetchReference, type LoopRequest } from './trade.js';
+import { fetchReference, type LoopRequest } from './exchange.js';
 import { HUB_IDS, type Hub, type LoopsResponse, type ReferenceResponse } from '../shared/types.js';
 
 const PORT = Number(process.env.PORT ?? 8765);

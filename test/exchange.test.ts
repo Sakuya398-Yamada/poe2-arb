@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TTL_MS, bestOffer, fetchExchange, fetchReference, parseExchange, resetTradeState, type Offer } from '../server/trade.js';
+import { TTL_MS, bestOffer, fetchExchange, fetchReference, parseExchange, resetTradeState, type Offer } from '../server/exchange.js';
 import { buildTradeIdMap } from '../server/icons.js';
 
 // Trimmed real response of POST /api/trade2/exchange/poe2/Forbidden%20Rites with have=[exalted], want=[divine]
