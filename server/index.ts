@@ -5,8 +5,9 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { buildBook, findLoops } from './arb.js';
+import { buildBook, findLoops, goldPerHubFromEx, loopKey, scoreRecurrence } from './arb.js';
 import { fetchWindow } from './ggg.js';
+import { loadGoldFees } from './gold.js';
 import { loadTradeStatic } from './trade.js';
 import { loadNames, makeResolver } from './names.js';
 import { HUB_IDS, type Hub, type LoopsResponse } from '../shared/types.js';
@@ -14,6 +15,8 @@ import { HUB_IDS, type Hub, type LoopsResponse } from '../shared/types.js';
 const PORT = Number(process.env.PORT ?? 8765);
 const DIST = path.resolve(process.cwd(), 'dist');
 const DEFAULT_LEAGUE = process.env.POE2ARB_LEAGUE ?? 'Forbidden Rites';
+/** gold you would pay for 1 Exalted Orb (unset → fees shown in gold only, no fee-adjusted profit) */
+const GOLD_PER_EX = Number(process.env.POE2ARB_GOLD_PER_EX ?? 0) || 0;
 const HUBS: Hub[] = ['ex', 'div', 'chaos'];
 
 const MIME: Record<string, string> = {
@@ -27,10 +30,18 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Promise<LoopsResponse> {
-	const [names, trade, win] = await Promise.all([loadNames(), loadTradeStatic(), fetchWindow(league, hours)]);
+	const [names, trade, goldFees, win] = await Promise.all([loadNames(), loadTradeStatic(), loadGoldFees(), fetchWindow(league, hours)]);
 	const resolve = makeResolver(names, (art) => trade.icons[art], (name) => trade.ja[name]);
 	const book = buildBook(win.markets);
-	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve);
+	const goldPerHub = GOLD_PER_EX > 0 ? goldPerHubFromEx(GOLD_PER_EX, book.hubRates) : {};
+	const gold = { feeOf: (id: string) => { const n = names[id]?.name; return n === undefined ? undefined : goldFees[n]; }, goldPerHub };
+	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve, gold);
+	// Recurrence: recompute loops per hour bucket (same cached data, no extra fetches) and count profitable hours.
+	const hourly = win.byBucket.map((h) => findLoops(buildBook(h.markets), hubs[0], hubs[1], resolve).loops);
+	const recurrence = scoreRecurrence(hourly);
+	for (const l of loops) {
+		l.recurrence = recurrence.get(loopKey(l)) ?? { hoursProfitable: 0, hoursTotal: hourly.length, medianProfit: null };
+	}
 	const hubIcons: LoopsResponse['hubIcons'] = {};
 	for (const h of HUBS) { const icon = resolve(HUB_IDS[h]).icon; if (icon) hubIcons[h] = icon; }
 	loops.sort((a, b) => b.profit.vwap - a.profit.vwap);
@@ -45,6 +56,7 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 		hubs,
 		hubRate: r ? { worst: r.price.lo, best: r.price.hi, vwap: r.vwap } : null,
 		hubIcons,
+		goldPerHub,
 		loops,
 		skipped,
 	};

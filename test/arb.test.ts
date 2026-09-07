@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBook, computeLoop, findLoops, pricePerUnit } from '../server/arb.js';
+import { buildBook, computeLoop, findLoops, goldFeePerItem, goldPerHubFromEx, loopKey, pricePerUnit, scoreRecurrence } from '../server/arb.js';
 import { HUB_IDS, type GggMarket } from '../shared/types.js';
 
 const EX = HUB_IDS.ex, DIV = HUB_IDS.div, CH = HUB_IDS.chaos;
@@ -133,5 +133,90 @@ describe('computeLoop / findLoops', () => {
 		const book = buildBook([chEx, vaalEx, vaalCh]);
 		const { loops } = findLoops(book, 'ex', 'chaos', resolve);
 		expect(loops).toHaveLength(2);
+	});
+});
+
+// GoldPurchaseFee per requested unit, from poe2db's Currency Exchange table (2026-09-07):
+//   Exalted 120, Chaos 160, Divine 800, Vaal 160
+const FEES: Record<string, number> = { [EX]: 120, [CH]: 160, [DIV]: 800, [VAAL]: 160 };
+const feeOf = (id: string) => FEES[id];
+
+describe('gold fee', () => {
+	const resolve = (id: string) => ({ name: id.split('/').pop()!, category: 'Currency' });
+	it('charges fee(requested) × units received on each leg', () => {
+		// 1 item sells for 0.02 div, 1 div = 100 ex: leg1 requests 1 vaal, leg2 requests 0.02 div, leg3 requests 2 ex
+		const f = goldFeePerItem(160, 800, 120, 0.02, 100);
+		expect(f.item).toBe(160);
+		expect(f.toHub).toBeCloseTo(16);
+		expect(f.fromHub).toBeCloseTo(240);
+		expect(f.total).toBeCloseTo(416);
+	});
+
+	it('attaches goldFee to loops and derives afterFee from the gold→from-hub rate', () => {
+		const book = buildBook([divEx, vaalEx, vaalDiv]);
+		const goldPerHub = { ex: 1000 };
+		const { loops } = findLoops(book, 'ex', 'div', resolve, { feeOf, goldPerHub });
+		const l = loops.find((x) => x.from === 'ex' && x.to === 'div')!;
+		const expected = goldFeePerItem(160, 800, 120, l.sell.vwap, l.convert.vwap);
+		expect(l.goldFee).toEqual(expected);
+		// fee (in ex) per item / cost (ex) per item = fraction of the stack lost to gold
+		expect(l.profit.afterFee).toBeCloseTo(l.profit.vwap - expected.total / 1000 / l.buy.vwap);
+		// reverse loop starts in div, whose gold rate is not configured → fee known but no afterFee
+		const r = loops.find((x) => x.from === 'div' && x.to === 'ex')!;
+		expect(r.goldFee).toEqual(goldFeePerItem(160, 120, 800, r.sell.vwap, r.convert.vwap));
+		expect(r.profit.afterFee).toBeUndefined();
+	});
+
+	it('omits goldFee when the item fee is unknown', () => {
+		const book = buildBook([divEx, vaalEx, vaalDiv]);
+		const { loops } = findLoops(book, 'ex', 'div', resolve, { feeOf: (id) => (id === VAAL ? undefined : FEES[id]) });
+		expect(loops.every((l) => l.goldFee === undefined && l.profit.afterFee === undefined)).toBe(true);
+	});
+
+	it('goldPerHubFromEx scales div/chaos by the observed ex-per-hub VWAP', () => {
+		const book = buildBook([divEx]);
+		const g = goldPerHubFromEx(1000, book.hubRates);
+		expect(g.ex).toBe(1000);
+		expect(g.div).toBeCloseTo(1000 * (3372971 / 34366));
+		expect(g.chaos).toBeUndefined();
+	});
+});
+
+describe('scoreRecurrence', () => {
+	// A synthetic loop with an exact VWAP profit multiplier: item = 10 ex, sold for 0.1*p div, 1 div = 100 ex.
+	const q = (hub: 'ex' | 'div', p: number) => ({ hub, price: { lo: p, hi: p }, vwap: p, volumeItems: 1, volumeHub: p });
+	const rate = { price: { lo: 100, hi: 100 }, vwap: 100, volumeFrom: 100, volumeTo: 1 };
+	const loop = (itemId: string, profit: number, reverse = false) =>
+		reverse
+			? computeLoop(itemId, itemId, 'c', q('div', 0.1), q('ex', 10 * profit), { price: { lo: 0.01, hi: 0.01 }, vwap: 0.01, volumeFrom: 1, volumeTo: 100 })
+			: computeLoop(itemId, itemId, 'c', q('ex', 10), q('div', 0.1 * profit), rate);
+
+	it('counts profitable hours over all hours, treating a missing hour as not profitable', () => {
+		const r = scoreRecurrence([[loop('a', 1.2)], [loop('a', 1.05)], []]);
+		const a = r.get('a|ex|div')!;
+		expect(a.hoursTotal).toBe(3);
+		expect(a.hoursProfitable).toBe(2);
+		expect(a.medianProfit).toBeCloseTo((1.2 + 1.05) / 2); // even count → mean of the middle two
+	});
+
+	it('takes the median over hours where the loop existed, unprofitable ones included', () => {
+		const r = scoreRecurrence([[loop('a', 1.3)], [loop('a', 0.9)], [loop('a', 1.1)]]);
+		const a = r.get('a|ex|div')!;
+		expect(a.hoursProfitable).toBe(2);
+		expect(a.medianProfit).toBeCloseTo(1.1);
+	});
+
+	it('is 1/1 for a single hour and keeps the two directions apart', () => {
+		const fwd = loop('a', 1.2), rev = loop('a', 0.8, true);
+		expect(loopKey(fwd)).toBe('a|ex|div');
+		expect(loopKey(rev)).toBe('a|div|ex');
+		const r = scoreRecurrence([[fwd, rev]]);
+		expect(r.get('a|ex|div')).toEqual({ hoursProfitable: 1, hoursTotal: 1, medianProfit: fwd.profit.vwap });
+		expect(r.get('a|div|ex')!.hoursProfitable).toBe(0);
+	});
+
+	it('exactly break-even (profit 1.0) does not count as profitable', () => {
+		const r = scoreRecurrence([[loop('a', 1)]]);
+		expect(r.get('a|ex|div')!.hoursProfitable).toBe(0);
 	});
 });
