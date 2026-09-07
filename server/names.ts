@@ -5,7 +5,6 @@ import path from 'node:path';
 
 const URL = 'https://repoe-fork.github.io/poe2/base_items.json';
 const CACHE_DIR = path.resolve(process.cwd(), '.cache');
-const CACHE_FILE = path.join(CACHE_DIR, 'names.json');
 /** Bump when NameEntry gains fields so an old .cache/names.json is re-downloaded. */
 const CACHE_VERSION = 2;
 
@@ -15,10 +14,11 @@ export interface NameEntry {
 	/** RePoE `visual_identity.dds_file`, e.g. "Art/2DItems/Currency/CurrencyAddModToRare.dds". Used to look up the icon. */
 	art?: string;
 }
-type NameMap = Record<string, NameEntry>;
+export type NameMap = Record<string, NameEntry>;
 interface CacheFile { v: number; items: NameMap }
+type RawBaseItems = Record<string, { name?: string; item_class?: string; visual_identity?: { dds_file?: string } }>;
 
-let loaded: NameMap | null = null;
+const RETRY_MS = 10 * 60 * 1000;
 
 /** Human-ish category from the metadata path + RePoE item_class. */
 function categoryOf(id: string, itemClass: string): string {
@@ -36,16 +36,8 @@ function categoryOf(id: string, itemClass: string): string {
 	return itemClass || seg[2] || 'Other';
 }
 
-export async function loadNames(fetchImpl: typeof fetch = fetch): Promise<NameMap> {
-	if (loaded) return loaded;
-	try {
-		const c = JSON.parse(await readFile(CACHE_FILE, 'utf8')) as CacheFile;
-		if (c.v === CACHE_VERSION && c.items) { loaded = c.items; return loaded; }
-	} catch { /* no cache yet */ }
-
-	const res = await fetchImpl(URL, { headers: { 'User-Agent': 'poe2-arb/0.1' } });
-	if (!res.ok) throw new Error(`RePoE base_items: HTTP ${res.status}`);
-	const raw = (await res.json()) as Record<string, { name?: string; item_class?: string; visual_identity?: { dds_file?: string } }>;
+/** RePoE base_items.json → NameMap (only the fields we display). Exported for tests. */
+export function parseBaseItems(raw: RawBaseItems): NameMap {
 	const map: NameMap = {};
 	for (const [id, v] of Object.entries(raw)) {
 		if (!v?.name) continue;
@@ -53,16 +45,76 @@ export async function loadNames(fetchImpl: typeof fetch = fetch): Promise<NameMa
 		if (v.visual_identity?.dds_file) e.art = v.visual_identity.dds_file;
 		map[id] = e;
 	}
-	await mkdir(CACHE_DIR, { recursive: true });
-	await writeFile(CACHE_FILE, JSON.stringify({ v: CACHE_VERSION, items: map } satisfies CacheFile));
-	loaded = map;
 	return map;
 }
 
-export function makeResolver(map: NameMap, iconFor: (art: string) => string | undefined = () => undefined) {
-	return (id: string): NameEntry & { icon?: string } => {
+export interface NameLoaderOptions {
+	/** Defaults to .cache/names.json under cwd. Tests point this at a temp dir. */
+	cacheFile?: string;
+	/** Clock, injectable so tests can move past RETRY_MS. */
+	now?: () => number;
+}
+
+/**
+ * Builds a name loader with its own cache state. The returned function never throws: when the cache is
+ * missing and RePoE cannot be fetched it warns, returns an empty map (so makeResolver falls back to the
+ * id's last path segment) and retries after RETRY_MS, not on every request — same policy as loadTradeStatic.
+ */
+export function createNameLoader(opts: NameLoaderOptions = {}) {
+	const cacheFile = opts.cacheFile ?? path.join(CACHE_DIR, 'names.json');
+	const now = opts.now ?? Date.now;
+	let loaded: NameMap | null = null;
+	let nextRetryAt = 0;
+
+	async function download(fetchImpl: typeof fetch): Promise<NameMap> {
+		const res = await fetchImpl(URL, { headers: { 'User-Agent': 'poe2-arb/0.1' } });
+		if (!res.ok) throw new Error(`RePoE base_items: HTTP ${res.status}`);
+		const map = parseBaseItems((await res.json()) as RawBaseItems);
+		// A failed cache write only costs the next start-up a re-download; keep the names we already have.
+		try {
+			await mkdir(path.dirname(cacheFile), { recursive: true });
+			await writeFile(cacheFile, JSON.stringify({ v: CACHE_VERSION, items: map } satisfies CacheFile));
+		} catch (e) {
+			console.warn(`names: cache write failed (${(e as Error).message}); continuing without cache`);
+		}
+		return map;
+	}
+
+	return async function loadNames(fetchImpl: typeof fetch = fetch): Promise<NameMap> {
+		if (loaded) return loaded;
+		try {
+			const c = JSON.parse(await readFile(cacheFile, 'utf8')) as CacheFile;
+			if (c.v === CACHE_VERSION && c.items) { loaded = c.items; return loaded; }
+		} catch { /* no cache yet */ }
+
+		if (now() < nextRetryAt) return {};
+		try {
+			loaded = await download(fetchImpl);
+			return loaded;
+		} catch (e) {
+			console.warn(`names: RePoE fetch failed (${(e as Error).message}); showing ids until retry`);
+			nextRetryAt = now() + RETRY_MS;
+			return {};
+		}
+	};
+}
+
+export const loadNames = createNameLoader();
+
+/**
+ * `jaFor` is keyed by the English name (RePoE `name` == trade-site EN `text`), see trade.ts for why not by art.
+ * `iconForName` is the icon fallback for items the trade site has no entry for at all, see wiki.ts.
+ */
+export function makeResolver(
+	map: NameMap,
+	iconFor: (art: string) => string | undefined = () => undefined,
+	jaFor: (name: string) => string | undefined = () => undefined,
+	iconForName: (name: string) => string | undefined = () => undefined,
+) {
+	return (id: string): NameEntry & { icon?: string; ja?: string } => {
 		const e = map[id] ?? { name: id.split('/').pop() ?? id, category: categoryOf(id, '') };
-		const icon = e.art ? iconFor(e.art) : undefined;
-		return icon ? { ...e, icon } : { ...e };
+		const icon = (e.art ? iconFor(e.art) : undefined) ?? iconForName(e.name);
+		const ja = jaFor(e.name);
+		return { ...e, ...(icon ? { icon } : {}), ...(ja ? { ja } : {}) };
 	};
 }

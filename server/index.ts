@@ -1,21 +1,25 @@
 // Local API + static server. No framework: node:http only.
 //   GET /api/loops?league=Forbidden%20Rites&hours=1&hubs=ex,div
-//   GET /api/reference?league=…&hours=1&hubs=ex,div&loops=ex>Metadata/…>div,…   (≤5 loops, trade-site listings)
+//   GET /api/reference?league=…&hours=1&hubs=ex,div&loops=Metadata/…|ex|div,…   (≤5 loops, trade-site listings)
 //   GET /api/leagues
 //   everything else → dist/ (built by `vite build`)
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { buildBook, findLoops } from './arb.js';
+import { buildBook, findLoops, goldPerHubFromEx, loopKey, scoreRecurrence } from './arb.js';
 import { fetchWindow } from './ggg.js';
-import { loadIcons, loadStatic } from './icons.js';
+import { loadGoldFees } from './gold.js';
+import { loadTradeStatic } from './trade.js';
 import { loadNames, makeResolver } from './names.js';
+import { loadWikiIcons } from './wiki.js';
 import { fetchReference, type LoopRequest } from './exchange.js';
 import { HUB_IDS, type Hub, type LoopsResponse, type ReferenceResponse } from '../shared/types.js';
 
 const PORT = Number(process.env.PORT ?? 8765);
 const DIST = path.resolve(process.cwd(), 'dist');
 const DEFAULT_LEAGUE = process.env.POE2ARB_LEAGUE ?? 'Forbidden Rites';
+/** gold you would pay for 1 Exalted Orb (unset → fees shown in gold only, no fee-adjusted profit) */
+const GOLD_PER_EX = Number(process.env.POE2ARB_GOLD_PER_EX ?? 0) || 0;
 const HUBS: Hub[] = ['ex', 'div', 'chaos'];
 
 const MIME: Record<string, string> = {
@@ -29,10 +33,27 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Promise<LoopsResponse> {
-	const [names, icons, win] = await Promise.all([loadNames(), loadIcons(), fetchWindow(league, hours)]);
-	const resolve = makeResolver(names, (art) => icons[art]);
+	const [names, trade, goldFees, win] = await Promise.all([loadNames(), loadTradeStatic(), loadGoldFees(), fetchWindow(league, hours)]);
+	// Items the trade site has no entry for at all fall back to the community wiki, looked up by name.
+	const unlisted = new Set<string>();
+	for (const m of win.markets) {
+		for (const id of m.market_pair) {
+			const e = names[id];
+			if (e && !(e.art && trade.icons[e.art])) unlisted.add(e.name);
+		}
+	}
+	const wiki = await loadWikiIcons([...unlisted]);
+	const resolve = makeResolver(names, (art) => trade.icons[art], (name) => trade.ja[name], (name) => wiki[name]);
 	const book = buildBook(win.markets);
-	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve);
+	const goldPerHub = GOLD_PER_EX > 0 ? goldPerHubFromEx(GOLD_PER_EX, book.hubRates) : {};
+	const gold = { feeOf: (id: string) => { const n = names[id]?.name; return n === undefined ? undefined : goldFees[n]; }, goldPerHub };
+	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve, gold);
+	// Recurrence: recompute loops per hour bucket (same cached data, no extra fetches) and count profitable hours.
+	const hourly = win.byBucket.map((h) => findLoops(buildBook(h.markets), hubs[0], hubs[1], resolve).loops);
+	const recurrence = scoreRecurrence(hourly);
+	for (const l of loops) {
+		l.recurrence = recurrence.get(loopKey(l)) ?? { hoursProfitable: 0, hoursTotal: hourly.length, medianProfit: null };
+	}
 	const hubIcons: LoopsResponse['hubIcons'] = {};
 	for (const h of HUBS) { const icon = resolve(HUB_IDS[h]).icon; if (icon) hubIcons[h] = icon; }
 	loops.sort((a, b) => b.profit.vwap - a.profit.vwap);
@@ -47,6 +68,7 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 		hubs,
 		hubRate: r ? { worst: r.price.lo, best: r.price.hi, vwap: r.vwap } : null,
 		hubIcons,
+		goldPerHub,
 		loops,
 		skipped,
 	};
@@ -54,17 +76,17 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 
 export const MAX_REFERENCE_LOOPS = 5;
 
-/** Trade-site reference prices for loops given as "from>itemId>to" keys of the current /api/loops result. */
+/** Trade-site listing prices for loops given as `loopKey` values of the current /api/loops result. */
 export async function reference(league: string, hours: number, hubs: [Hub, Hub], keys: string[]): Promise<ReferenceResponse> {
-	const [names, statics, loopsRes] = await Promise.all([loadNames(), loadStatic(), loops(league, hours, hubs)]);
+	const [names, trade, loopsRes] = await Promise.all([loadNames(), loadTradeStatic(), loops(league, hours, hubs)]);
 	const tradeId = (metaId: string): string | undefined => {
 		const name = names[metaId]?.name;
-		return name ? statics.tradeIds[name] : undefined;
+		return name ? trade.tradeIds[name] : undefined;
 	};
 	const reqs: LoopRequest[] = [];
 	const errors: string[] = [];
 	for (const key of keys) {
-		const l = loopsRes.loops.find((x) => `${x.from}>${x.itemId}>${x.to}` === key);
+		const l = loopsRes.loops.find((x) => loopKey(x) === key);
 		if (!l) { errors.push(`unknown loop: ${key}`); continue; }
 		reqs.push({
 			itemId: l.itemId, from: l.from, to: l.to,
@@ -108,7 +130,7 @@ const server = http.createServer(async (req, res) => {
 			if (url.pathname === '/api/loops') return json(res, 200, await loops(league, hours, hubs as [Hub, Hub]));
 			const keys = (url.searchParams.get('loops') ?? '').split(',').filter(Boolean);
 			if (keys.length === 0 || keys.length > MAX_REFERENCE_LOOPS) {
-				return json(res, 400, { error: `loops must list 1〜${MAX_REFERENCE_LOOPS} "from>itemId>to" keys` });
+				return json(res, 400, { error: `loops must list 1〜${MAX_REFERENCE_LOOPS} loop keys` });
 			}
 			return json(res, 200, await reference(league, hours, hubs as [Hub, Hub], keys));
 		}

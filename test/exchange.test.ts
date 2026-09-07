@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TTL_MS, bestOffer, fetchExchange, fetchReference, parseExchange, resetTradeState, type Offer } from '../server/exchange.js';
-import { buildTradeIdMap } from '../server/icons.js';
 
 // Trimmed real response of POST /api/trade2/exchange/poe2/Forbidden%20Rites with have=[exalted], want=[divine]
 // (2026-09-07). `exchange` is what the buyer pays, `item` is what the seller gives; `stock` counts `item`.
@@ -51,13 +50,6 @@ describe('bestOffer', () => {
 	});
 	it('returns null only when no listing trades the pair at all', () => {
 		expect(bestOffer(exForDiv, 'chaos', 'exalted', 'buy', 1)).toBeNull();
-	});
-});
-
-describe('buildTradeIdMap', () => {
-	it('keys trade-site ids by display name and skips separators', () => {
-		expect(buildTradeIdMap({ result: [{ id: 'Currency', entries: [{ id: 'exalted', text: 'Exalted Orb' }, { id: 'sep', text: '' }, { id: 'divine', text: 'Divine Orb' }] }] }))
-			.toEqual({ 'Exalted Orb': 'exalted', 'Divine Orb': 'divine' });
 	});
 });
 
