@@ -13,7 +13,7 @@
 |---------|------|------|
 | `package-lock.json` | ~1,500 行 | 読まない。依存確認は `package.json` で足りる |
 | `.cache/names.json` | 850KB（1行） | 読まない。特定 ID を見たいときは `node -e` か `Grep` で抜く |
-| `.cache/icons.json` | 150KB（1行） | 同上 |
+| `.cache/trade.json` | 200KB（1行） | 同上 |
 | `dist/assets/*.js` | ビルド成果物 | 読まない。`web/` のソースを読む |
 | GGG API のレスポンス | 1時間分で数千レコード | `curl` で保存してから `node -e` で集計する。全文を貼らない |
 

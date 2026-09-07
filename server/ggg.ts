@@ -28,7 +28,9 @@ export async function fetchHour(bucket: number, fetchImpl: typeof fetch = fetch)
 
 export interface Window {
 	buckets: number[]; // ascending
-	markets: GggMarket[]; // filtered to league
+	markets: GggMarket[]; // filtered to league, all hours concatenated
+	/** same markets split per hour bucket (ascending, parallel to `buckets`) — for per-hour recurrence scoring */
+	byBucket: { bucket: number; markets: GggMarket[] }[];
 	leagues: string[]; // all leagues seen (for the league picker)
 }
 
@@ -49,17 +51,17 @@ export async function fetchWindow(league: string, hours: number, opts: { now?: n
 	}
 	if (!found) throw new Error(`No Currency Exchange data in the last ${maxLookback} hours`);
 
-	const buckets = [newest];
-	const all: GggMarket[] = [...found.markets];
+	const hoursData: { bucket: number; markets: GggMarket[] }[] = [{ bucket: newest, markets: found.markets }];
 	for (let i = 1; i < hours; i++) {
 		const b = newest - i * HOUR;
 		const h = await fetchHour(b, f);
 		if (h.markets.length === 0) continue;
-		buckets.push(b);
-		all.push(...h.markets);
+		hoursData.push({ bucket: b, markets: h.markets });
 	}
-	buckets.sort((a, b) => a - b);
+	hoursData.sort((a, b) => a.bucket - b.bucket);
 
+	const all = hoursData.flatMap((h) => h.markets);
 	const leagues = [...new Set(all.map((m) => m.league))].sort();
-	return { buckets, markets: all.filter((m) => m.league === league), leagues };
+	const byBucket = hoursData.map((h) => ({ bucket: h.bucket, markets: h.markets.filter((m) => m.league === league) }));
+	return { buckets: byBucket.map((h) => h.bucket), markets: byBucket.flatMap((h) => h.markets), byBucket, leagues };
 }

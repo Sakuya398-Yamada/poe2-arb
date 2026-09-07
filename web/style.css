@@ -46,6 +46,8 @@ th[data-sort]:hover, th.sorted { color: var(--gold); }
 td.l, th:nth-child(2), th:nth-child(3) { text-align: left; }
 td.num { font-family: var(--mono); }
 td .cat { color: var(--muted); font-size: 11px; margin-left: 6px; }
+/* English name shown after the Japanese one */
+.en { color: var(--muted); font-size: 11px; font-weight: normal; margin-left: 6px; }
 /* item / hub icons: fixed box so rows align whether or not an image exists */
 .icon {
 	display: inline-block; vertical-align: middle; flex: none;
@@ -59,6 +61,8 @@ td.route .hub, .detail .route .hub { display: inline-flex; align-items: center; 
 td.route .icon, .detail .route .icon { margin-right: 2px; }
 .detail li b { display: inline-flex; align-items: center; vertical-align: bottom; }
 td .rng { color: var(--muted); font-size: 11px; }
+/* recurrence columns only mean something with 2+ hours in the window */
+table.single .rec { display: none; }
 .pos { color: var(--good); }
 .neg { color: var(--bad); }
 tr.row { cursor: pointer; }

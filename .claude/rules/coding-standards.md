@@ -7,7 +7,7 @@
 - 言語は **TypeScript** で統一する（サーバ・フロント・テスト・スクリプトすべて。`scripts/dev.mjs` のみ例外）
 - `tsconfig.json` の `strict: true` を維持する。`any` は使わない。外部 JSON は取り込み口で型を付ける（`as GggHour` 等）
 - ランタイム依存を増やさない（フレームワーク・HTTP クライアント・ユーティリティ含む）。標準 API（`fetch`、`node:http`、`node:fs/promises`）で書く
-- **純粋関数と I/O を分ける**: 計算ロジックは `server/arb.ts` のように I/O を持たない純粋関数にしてユニットテストする。外部取得（`ggg.ts` / `names.ts` / `icons.ts`）は `fetchImpl` を注入可能にする
+- **純粋関数と I/O を分ける**: 計算ロジックは `server/arb.ts` のように I/O を持たない純粋関数にしてユニットテストする。外部取得（`ggg.ts` / `names.ts` / `trade.ts`）は `fetchImpl` を注入可能にする
 - サーバとフロントで共有する型は `shared/types.ts` にだけ置く（ランタイム依存なし）
 - 外部 API の取得失敗は**全体を止めない**方向に倒す（例: アイコンが取れなければ名前だけ表示）
 - 数値の意味（「1アイテムあたりのハブ通貨量」「from 単位 / to 単位」等）はコメントか型名で明示する。レシオの向きの取り違えがこのツール最大のバグ源
@@ -23,7 +23,8 @@ poe2-arb/
 │   ├── ggg.ts           # GGG API 取得（最新完了時間の探索・メモリキャッシュ・N時間マージ）
 │   ├── arb.ts           # 純粋関数: レシオ正規化・Book 構築・ループ計算
 │   ├── names.ts         # RePoE から名前・カテゴリ・アートパス解決（.cache/names.json）
-│   └── icons.ts         # 公式トレード静的データからアイコンURL解決（.cache/icons.json）
+│   ├── trade.ts         # 公式トレード静的データ(EN/JP)からアイコンURL・日本語名解決（.cache/trade.json）
+│   └── wiki.ts          # トレード静的データに無いアイテムのアイコンを poe2wiki から補完（.cache/wiki-icons.json）
 ├── shared/
 │   └── types.ts         # サーバ/フロント共通型・ハブ通貨定義
 ├── web/                 # Vite root。index.html / main.ts / style.css

@@ -23,9 +23,11 @@ npm run typecheck
 | 何 | どこから | 備考 |
 |---|---|---|
 | 約定データ | `GET https://web.poecdn.com/api/currency-exchange/poe2/<unixHour>` | GGG公式・認証不要。**完了した1時間**の全ペアの集計。約5分遅延。`markets` が空 = その時間はまだ無い |
-| アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存 |
-| アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/icons.json` に保存し1日1回更新 |
+| アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存。取得に失敗しても一覧は止めず、IDの末尾(例: `CurrencyAddModToRare`)を名前として表示し10分後に再試行 |
+| アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/trade.json` に保存し1日1回更新 |
 | アイコン(補完) | `GET https://www.poe2wiki.net/w/api.php?action=query&prop=imageinfo` | 上の静的データに項目が無いアイテムだけを名前で問い合わせる。`.cache/wiki-icons.json` に保存(空振りも記録し1週間は再問い合わせしない) |
+| 日本語アイテム名 | `GET https://jp.pathofexile.com/api/trade2/data/static` | 上と同じ構造の日本語版(190KB・認証不要)。`id` で英語版と結合し「英名 → 日本語名」の表を作って `.cache/trade.json` に同居させる |
+| ゴールド手数料 | `https://poe2db.tw/us/Currency_Exchange` | ゲームデータ `CurrencyExchange.GoldPurchaseFee` の poe2db 表示(HTML 570KB)をアイテム名→gold にパース。`.cache/gold.json` に保存し週1回更新。取れなければ手数料「?」表示で続行 |
 
 GGGのレコード(1ペア1時間)は次の形:
 
@@ -59,6 +61,15 @@ wiki 側にも無ければ従来どおり空枠のままで、一覧全体は止
 
 画像はブラウザが poecdn / poe2wiki から直接読む(サーバは中継しない)。
 
+### 日本語アイテム名
+
+公式トレードサイトの静的データは `jp.pathofexile.com` でも同じ構造で配信されていて、`text` だけが日本語になっている。
+英語版と日本語版を `id` で結合すると全 772 件が対応し、英語版の `text` は RePoE の `name` と 771/772 件一致するので、
+**英名をキーに** 日本語名を引く(アートパスでは変成のオーブ/上級/完全のように同じ画像を使う段階違いが衝突する)。
+2026-09-07 時点で取引所に出ていた 548 種(6時間・全ハブペア)のうち 540 種に日本語名が付く。
+残りはアイドル・ピナクルキー・一部のリネージジェムで、日本語版にも載っていないため英名のみで表示する。
+日本語版の取得に失敗しても英語版が取れていればアイコンは更新し、日本語名は前回のキャッシュを使い続ける。
+
 ## 計算
 
 ループ `from → item → to → from` の倍率:
@@ -84,13 +95,53 @@ profit = sell(to per item) × rate(from per to) / buy(from per item)
 `min(買い側で動いたアイテム数, 売り側で動いたアイテム数)`。
 括弧内に「売り側で動いたハブ通貨の量」も出している。
 **神側の市場は薄いことが多く、そこで数div分だけ良いレートの約定があるとVWAP利益が数百%になる**。
-それは嘘ではないが、その時間にその量しか捌けていないという意味なので、再現性は売り側の量で判断すること。
+それは嘘ではないが、その時間にその量しか捌けていないという意味なので、再現性は売り側の量と下記の再現性スコアで判断すること。
+
+### 再現性(hours ≥ 2 のとき)
+
+N 時間マージの VWAP とは別に、**時間バケットごとに** Book を組み直してループを計算し、同じループ(アイテム + 方向)が
+各時間でどう出たかを集計する(`server/arb.ts` の `scoreRecurrence`)。
+
+- **再現**: VWAP 利益 > 0% で出現した時間数 / 窓の時間数。片側のハブ市場に約定が無い時間は「出現なし」として分母に残す。
+  薄い市場で 1 時間だけ良いレートが出たループは `1/6` のように低くなる
+- **利益(中央値)**: ループが算出できた各時間の VWAP 利益の中央値(利益なしの時間も含む)。1 時間だけ突出した約定に引きずられない
+
+hours = 1 のときは `1/1` にしかならないので UI では列を隠す。GGG API の取得は従来どおり時間バケット単位のキャッシュから
+行い、再現性の計算で取得回数は増えない。
+
+### ゴールド手数料
+
+取引所は注文成立時に **「要求側(I want)のアイテム 1 個あたり固定のゴールド × 個数」** を取る、として見積もっている。
+
+- 出典: ゲームデータの `CurrencyExchange` テーブルにアイテムごとの `GoldPurchaseFee`(整数)がある([poe-tool-dev/dat-schema](https://github.com/poe-tool-dev/dat-schema))。
+  RePoE の PoE2 版はこの表を出力していないので、[poe2db の Currency Exchange ページ](https://poe2db.tw/us/Currency_Exchange)に表示されている値を使う(687 品目、2026-09-07 時点で 高貴 120 / カオス 160 / 神 800 / 変質 50 / ミラー 25000)。
+  第三者記事の「120 gold per exalt requested, 160 per chaos, 800 per divine」とも一致する。
+- **実機では未検証**(要求 10 個で 10 倍になるか、提供側に課金されないか、端数の丸め)。検証したら Issue #6 に記録する。
+- 手数料はレートや取引総額に依存しない固定値なので、レートの向きの取り違えのようなバグ源にはならない。
+
+ループ 1 周(アイテム 1 個)あたりの見積り:
+
+```
+fee = fee(item) × 1                                   # レグ1: item を要求
+    + fee(to)   × sell(to per item)                   # レグ2: to を要求
+    + fee(from) × sell(to per item) × rate(from per to) # レグ3: from を要求
+```
+
+環境変数 `POE2ARB_GOLD_PER_EX`(1 高貴あたりのゴールド。自分の感覚値)を設定すると、
+ハブ通貨換算した手数料を VWAP 利益から引いた **手数料込み利益** も出す:
+
+```
+profitAfterFee = profitVWAP − fee / goldPer(from) / buy(from per item)
+goldPer(div|chaos) = POE2ARB_GOLD_PER_EX × VWAP(ex per div|chaos)
+```
+
+ゴールドとハブ通貨の換算レートは外部から取っていない(ゴールドは取引できず、相場が存在しないため)。
 
 ## 制約(重要)
 
 - 板の現在値ではなく、**完了した直近1時間の約定の集計**。ゲーム内でAltキーで競合注文を見てから実行すること。
-- ゴールド手数料は考慮していない。
-- アイテム名は英語(RePoEの `name`)。
+- ゴールド手数料は「要求側 1 個あたり固定 × 個数」の見積りで、実機未検証(「計算 › ゴールド手数料」)。手数料込み利益は `POE2ARB_GOLD_PER_EX` を設定した時だけ出る。
+- アイテム名は公式トレードサイトの日本語名を主表示にし、英名(RePoEの `name`)を添える。日本語名が無いアイテムは英名のみ。
 - poe.ninja は使っていない(1ペア分のレートしか公開していないため、三角裁定には不足)。
 - GGGのAPIは「be reasonable」方針なので、取得は1時間バケット単位でメモリキャッシュし、5分ポーリング。
 
@@ -101,21 +152,27 @@ server/index.ts   http サーバ。/api/loops, /api/leagues, dist/ 配信
 server/ggg.ts     GGG API 取得(最新の完了時間の探索・キャッシュ・N時間マージ)
 server/arb.ts     純粋関数: レシオ正規化・Book 構築・ループ計算
 server/names.ts   RePoE から名前解決
+server/trade.ts   公式トレード静的データ(EN/JP)からアイコンURLと日本語名を解決
+server/wiki.ts    トレード静的データに無いアイテムのアイコンを poe2wiki から補完
+server/gold.ts    poe2db からゴールド手数料表を取得
 shared/types.ts   サーバ/フロント共通型
 web/              Vite + 素の TypeScript(依存なし)
-test/arb.test.ts  実データの値を使ったユニットテスト
+test/arb.test.ts  実データの値を使ったユニットテスト(レシオの向き・VWAP・再現性スコア)
+test/ggg.test.ts  fetchWindow のスタブテスト(バケット分割・取得回数)
+test/trade.test.ts トレード静的データの変換と名前解決のテスト
+test/wiki.test.ts  wiki アイコン補完(タイトル変換・imageinfo 解析・優先順位)のテスト
 ```
 
 ## API
 
 `GET /api/loops?league=Forbidden%20Rites&hours=1&hubs=ex,div`
 
-- `hours`: 1〜24。複数時間はレシオ幅を広げ、量を足し合わせる
+- `hours`: 1〜24。複数時間はレシオ幅を広げ、量を足し合わせる。各ループの `recurrence`(`hoursProfitable` / `hoursTotal` / `medianProfit`)は時間バケットごとの再計算から出す
 - `hubs`: `ex,div` / `ex,chaos` / `chaos,div`(順不同、両方向のループが返る)
+- 各ループの `name` は英名、`ja` は日本語名(無いときはキー自体が無い)、`icon` は画像URL(同上)
+- 各ループの `goldFee`(item / toHub / fromHub / total、gold/個)と `profit.afterFee`(`POE2ARB_GOLD_PER_EX` 設定時のみ)。レスポンス直下の `goldPerHub` は換算に使った 1 ハブあたりのゴールド
 
 ## 次にやると良さそうなこと
 
 - 公式トレードサイトの `trade2/exchange` の板(現在の注文)を足して「今すぐ成立するか」を判定する(POESESSID とレート制限の扱いが必要)
-- 数時間分の履歴で「毎時間出ている=再現性あり」ループをスコアリング
-- 日本語アイテム名(RePoE に翻訳が無いので別ソースが要る)
 - オーバーレイ化 / ゲーム内チャットへコピー

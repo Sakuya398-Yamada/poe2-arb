@@ -42,22 +42,28 @@ describe('parseImageInfo', () => {
 
 describe('makeResolver + wiki fallback', () => {
 	const ART = 'Art/2DItems/Currency/CurrencyAddModToRare.dds';
+	const PANTHER = 'https://www.poe2wiki.net/images/7/71/Panther_Idol_inventory_icon.png';
 	const names = {
 		'Metadata/Items/Currency/CurrencyAddModToRare': { name: 'Exalted Orb', category: 'Currency', art: ART },
 		'Metadata/Items/SoulCores/IdolPanther': { name: 'Panther Idol', category: 'Soul Core', art: 'Art/2DItems/Currency/TormentedSpiritSocketables/AzmeriSocketablePanther.dds' },
 	};
-	const wiki = (name: string) => (name === 'Panther Idol' ? 'https://www.poe2wiki.net/images/7/71/Panther_Idol_inventory_icon.png' : undefined);
+	const tradeIcon = (art: string) => (art === ART ? 'https://cdn/ex.png' : undefined);
+	const wikiIcon = (name: string) => (name === 'Panther Idol' ? PANTHER : undefined);
 
 	it('uses the wiki icon when the art path is not in the trade static data', () => {
-		const resolve = makeResolver(names, (art) => (art === ART ? 'https://cdn/ex.png' : undefined), wiki);
-		expect(resolve('Metadata/Items/SoulCores/IdolPanther').icon).toBe('https://www.poe2wiki.net/images/7/71/Panther_Idol_inventory_icon.png');
+		const resolve = makeResolver(names, tradeIcon, () => undefined, wikiIcon);
+		expect(resolve('Metadata/Items/SoulCores/IdolPanther').icon).toBe(PANTHER);
 	});
 	it('prefers the trade-site icon over the wiki one', () => {
-		const resolve = makeResolver(names, () => 'https://cdn/ex.png', () => 'https://wiki/other.png');
+		const resolve = makeResolver(names, () => 'https://cdn/ex.png', () => undefined, () => 'https://wiki/other.png');
 		expect(resolve('Metadata/Items/Currency/CurrencyAddModToRare').icon).toBe('https://cdn/ex.png');
 	});
 	it('leaves the icon unset when neither source has one', () => {
-		const resolve = makeResolver(names, () => undefined, () => undefined);
+		const resolve = makeResolver(names, () => undefined, () => undefined, () => undefined);
 		expect(resolve('Metadata/Items/SoulCores/IdolPanther').icon).toBeUndefined();
+	});
+	it('keeps the Japanese name alongside a wiki icon', () => {
+		const resolve = makeResolver(names, tradeIcon, (n) => (n === 'Panther Idol' ? 'ヒョウの偶像' : undefined), wikiIcon);
+		expect(resolve('Metadata/Items/SoulCores/IdolPanther')).toMatchObject({ icon: PANTHER, ja: 'ヒョウの偶像' });
 	});
 });
