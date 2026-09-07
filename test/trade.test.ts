@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { artOfImageUrl, buildIconMap, buildJaNameMap, mergeStatic } from '../server/trade.js';
+import { artOfImageUrl, buildIconMap, buildJaNameMap, mergeStatic, buildTradeIdMap } from '../server/trade.js';
 import { makeResolver } from '../server/names.js';
 
 // Real entry from https://www.pathofexile.com/api/trade2/data/static (2026-09-07). The base64 segment decodes to
@@ -67,15 +67,19 @@ describe('mergeStatic', () => {
 	const en = { result: [{ id: 'Currency', entries: [{ id: 'exalted', text: 'Exalted Orb', image: EX_IMAGE }] }] };
 	const jp = { result: [{ id: 'Currency', entries: [{ id: 'exalted', text: '高貴なオーブ' }] }] };
 	const icons = { [EX_ART]: 'https://web.poecdn.com' + EX_IMAGE };
+	const tradeIds = { 'Exalted Orb': 'exalted' };
 	it('builds both maps when JP succeeded', () => {
-		expect(mergeStatic(en, { status: 'fulfilled', value: jp }, null)).toEqual({ icons, ja: { 'Exalted Orb': '高貴なオーブ' }, jaStale: false });
+		expect(mergeStatic(en, { status: 'fulfilled', value: jp }, null)).toEqual({ icons, tradeIds, ja: { 'Exalted Orb': '高貴なオーブ' }, jaStale: false });
 	});
 	it('keeps the previous Japanese names, flagged stale, when JP failed', () => {
-		const previous = { icons: {}, ja: { 'Exalted Orb': '前回' }, jaStale: false };
-		expect(mergeStatic(en, { status: 'rejected', reason: new Error('HTTP 503') }, previous)).toEqual({ icons, ja: { 'Exalted Orb': '前回' }, jaStale: true });
+		const previous = { icons: {}, tradeIds: {}, ja: { 'Exalted Orb': '前回' }, jaStale: false };
+		expect(mergeStatic(en, { status: 'rejected', reason: new Error('HTTP 503') }, previous)).toEqual({ icons, tradeIds, ja: { 'Exalted Orb': '前回' }, jaStale: true });
 	});
 	it('falls back to no Japanese names when JP failed and there is no previous cache', () => {
-		expect(mergeStatic(en, { status: 'rejected', reason: new Error('HTTP 503') }, null)).toEqual({ icons, ja: {}, jaStale: true });
+		expect(mergeStatic(en, { status: 'rejected', reason: new Error('HTTP 503') }, null)).toEqual({ icons, tradeIds, ja: {}, jaStale: true });
+	});
+	it('builds trade ids from the EN data regardless of the JP result', () => {
+		expect(mergeStatic(en, { status: 'rejected', reason: new Error('HTTP 503') }, null).tradeIds).toEqual(tradeIds);
 	});
 });
 
@@ -99,5 +103,12 @@ describe('makeResolver + icons', () => {
 		expect(resolve('Metadata/Items/Currency/CurrencyAddModToRare')).toEqual({ name: 'Exalted Orb', category: 'Currency', art: EX_ART, ja: '高貴なオーブ' });
 		expect(resolve('Metadata/Items/Currency/NoArt')).toEqual({ name: 'No Art', category: 'Currency' });
 		expect(resolve('Metadata/Items/Currency/Unknown')).toEqual({ name: 'Unknown', category: 'Currency' });
+	});
+});
+
+describe('buildTradeIdMap', () => {
+	it('keys trade-site ids by display name and skips separators', () => {
+		expect(buildTradeIdMap({ result: [{ id: 'Currency', entries: [{ id: 'exalted', text: 'Exalted Orb' }, { id: 'sep', text: '' }, { id: 'divine', text: 'Divine Orb' }] }] }))
+			.toEqual({ 'Exalted Orb': 'exalted', 'Divine Orb': 'divine' });
 	});
 });

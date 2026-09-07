@@ -24,10 +24,11 @@ npm run typecheck
 |---|---|---|
 | 約定データ | `GET https://web.poecdn.com/api/currency-exchange/poe2/<unixHour>` | GGG公式・認証不要。**完了した1時間**の全ペアの集計。約5分遅延。`markets` が空 = その時間はまだ無い |
 | アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存。取得に失敗しても一覧は止めず、IDの末尾(例: `CurrencyAddModToRare`)を名前として表示し10分後に再試行 |
-| アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/trade.json` に保存し1日1回更新 |
+| アイコン・トレードID | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLと、出品相場の問い合わせに使う ID(`exalted` 等)を含む。`.cache/trade.json` に保存し1日1回更新 |
 | アイコン(補完) | `GET https://www.poe2wiki.net/w/api.php?action=query&prop=imageinfo` | 上の静的データに項目が無いアイテムだけを名前で問い合わせる。`.cache/wiki-icons.json` に保存(空振りも記録し1週間は再問い合わせしない) |
 | 日本語アイテム名 | `GET https://jp.pathofexile.com/api/trade2/data/static` | 上と同じ構造の日本語版(190KB・認証不要)。`id` で英語版と結合し「英名 → 日本語名」の表を作って `.cache/trade.json` に同居させる |
 | ゴールド手数料 | `https://poe2db.tw/us/Currency_Exchange` | ゲームデータ `CurrencyExchange.GoldPurchaseFee` の poe2db 表示(HTML 570KB)をアイテム名→gold にパース。`.cache/gold.json` に保存し週1回更新。取れなければ手数料「?」表示で続行 |
+| 出品相場(参考) | `POST https://www.pathofexile.com/api/trade2/exchange/poe2/<league>` | 公式トレードサイトの Bulk Item Exchange = **プレイヤーの倉庫出品**(ウィスパーして手渡し)。ゲーム内取引所の板ではない。認証不要。UI の「出品相場を取得」ボタンでのみ取得。詳細は下の「出品相場」 |
 
 GGGのレコード(1ペア1時間)は次の形:
 
@@ -137,9 +138,23 @@ goldPer(div|chaos) = POE2ARB_GOLD_PER_EX × VWAP(ex per div|chaos)
 
 ゴールドとハブ通貨の換算レートは外部から取っていない(ゴールドは取引できず、相場が存在しないため)。
 
+## 出品相場(トレードサイトのプレイヤー出品)
+
+ゲーム内取引所(Alva)の現在の板は公開 API が無い(GGG の Currency Exchange API は「purely historical」)。代わりに、公式トレードサイトの Bulk Item Exchange に出ているプレイヤー出品の最良価格を **参考値** として表示する。手渡し取引の相場なので、Alva の板と一致するとは限らない。
+
+- **対象**: 表示中のテーブルの上位 5 ループ(フィルタ・ソート適用後)。「出品相場を取得」ボタンを押したときだけ取得し、自動ポーリングはしない
+- **リクエスト数**: ハブ方向ごとに、買いレグ・売りレグ・ハブ間換算。各レグはまず 1 回のまとめ取得(`have=[from], want=[items]`)を試し、**応答が全件返ったときだけ**それを使う。切り詰められていたらアイテムごとに取り直す(1 レグ最大 6 回)。上位 5 ループが同じ方向なら 3〜13 回。全件返らない理由は下記
+- **まとめ取得を信用しない理由**: 複数アイテムを `want` に並べると、トレードサイトはレシオ順ではなく提示額順にページングする。2026-09-07 の実測では 5 アイテムのまとめ取得が 357 件中 100 件しか返さず、Lesser Jeweller's Orb が実勢 0.106 ex に対し 0.5 ex 以上の出品しか含まれていなかった。切り詰められたページは標本として使えない
+- **レート制限**: IP 単位で `5回/15秒・10回/90秒・30回/300秒`(レスポンスヘッダ `X-Rate-Limit-Ip`、2026-09-07 観測)。超過ペナルティは 60秒/300秒/1800秒。サーバ側で各窓に収まるよう送信間隔を空け、429 を受けたら `Retry-After` の間は送らない
+- **キャッシュ**: クエリ単位で 5 分間メモリキャッシュ。同じ上位 5 ループなら連打してもリクエストは出ない
+- **最良価格の選び方**: 買いは最安、売り・換算は最高。ただし GGG 約定の VWAP から 1/3〜3倍を外れる出品(1 ex → 1 div のような冗談出品)は無視する
+- **両市場が食い違う場合**: 出品が 1 件もない場合は「出品なし」。出品はあるが全件が 1/3〜3倍の外なら、最良出品を出したうえで「約定VWAPと乖離」と表示し、**参考利益は計算しない**(取引所の VWAP と無関係な価格を掛け合わせても意味がないため)。上位ループは薄い約定で VWAP が跳ねていることが多く、この乖離表示自体が「その VWAP は当てにならない」という手掛かりになる
+- **表示**: テーブルの「出品相場」列に最良出品で回した場合の利益と在庫上限、詳細パネルにレグごとの価格・在庫・出品数
+- 取得失敗・レート制限中でも VWAP 表示は影響を受けない(エラーはボタン横に出るだけ)
+
 ## 制約(重要)
 
-- 板の現在値ではなく、**完了した直近1時間の約定の集計**。ゲーム内でAltキーで競合注文を見てから実行すること。
+- 板の現在値ではなく、**完了した直近1時間の約定の集計**。ゲーム内でAltキーで競合注文を見てから実行すること。出品相場は補助情報で、しかも手渡し取引の板。
 - ゴールド手数料は「要求側 1 個あたり固定 × 個数」の見積りで、実機未検証(「計算 › ゴールド手数料」)。手数料込み利益は `POE2ARB_GOLD_PER_EX` を設定した時だけ出る。
 - アイテム名は公式トレードサイトの日本語名を主表示にし、英名(RePoEの `name`)を添える。日本語名が無いアイテムは英名のみ。
 - poe.ninja は使っていない(1ペア分のレートしか公開していないため、三角裁定には不足)。
@@ -152,7 +167,8 @@ server/index.ts   http サーバ。/api/loops, /api/leagues, dist/ 配信
 server/ggg.ts     GGG API 取得(最新の完了時間の探索・キャッシュ・N時間マージ)
 server/arb.ts     純粋関数: レシオ正規化・Book 構築・ループ計算
 server/names.ts   RePoE から名前解決
-server/trade.ts   公式トレード静的データ(EN/JP)からアイコンURLと日本語名を解決
+server/trade.ts   公式トレード静的データ(EN/JP)からアイコンURL・日本語名・トレードIDを解決
+server/exchange.ts トレードサイトの出品相場(取得・5分キャッシュ・レート制限ペーシング・最良価格)
 server/wiki.ts    トレード静的データに無いアイテムのアイコンを poe2wiki から補完
 server/gold.ts    poe2db からゴールド手数料表を取得
 shared/types.ts   サーバ/フロント共通型
@@ -172,7 +188,11 @@ test/wiki.test.ts  wiki アイコン補完(タイトル変換・imageinfo 解析
 - 各ループの `name` は英名、`ja` は日本語名(無いときはキー自体が無い)、`icon` は画像URL(同上)
 - 各ループの `goldFee`(item / toHub / fromHub / total、gold/個)と `profit.afterFee`(`POE2ARB_GOLD_PER_EX` 設定時のみ)。レスポンス直下の `goldPerHub` は換算に使った 1 ハブあたりのゴールド
 
+`GET /api/reference?league=…&hours=1&hubs=ex,div&loops=ex>Metadata/Items/Currency/CurrencyCorrupt>div,…`
+
+- `loops`: `/api/loops` の結果の `from>itemId>to` を 1〜5 個。レグごとの最良出品(`price` は Loop と同じ向き)・在庫・出品数と参考利益、`errors` を返す。トレードサイトが落ちていても 200 でレグが `null` になるだけ
+
 ## 次にやると良さそうなこと
 
-- 公式トレードサイトの `trade2/exchange` の板(現在の注文)を足して「今すぐ成立するか」を判定する(POESESSID とレート制限の扱いが必要)
+- ゲーム内取引所(Alva)の現在の板を読める方法が見つかったら「今すぐ成立するか」を判定する(2026-09-07 時点で公開 API は無い。トレードサイトの出品相場で代替中)
 - オーバーレイ化 / ゲーム内チャットへコピー

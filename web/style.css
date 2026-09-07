@@ -36,6 +36,10 @@ button:hover { border-color: var(--gold); }
 .status { padding: 8px 16px; color: var(--muted); font-size: 13px; }
 .status b { color: var(--fg); }
 .status .err { color: var(--bad); }
+.refstatus { color: var(--muted); font-size: 12px; }
+.refstatus .err { color: var(--bad); }
+button:disabled { opacity: .5; cursor: wait; }
+td.ref .k, .detail .ref .k { color: var(--muted); }
 main { display: block; }
 .tablewrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; }

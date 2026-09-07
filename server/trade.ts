@@ -7,6 +7,7 @@
 // so we key the icon map by RePoE's `visual_identity.dds_file` rather than by name.
 // Japanese names: EN and JP entries share `id`, so we join on it and key the result by the EN `text`
 // (which matches RePoE's `name`). Not by art path: tiered orbs (Transmutation / Greater / Perfect) share one image.
+// Trade ids: the same EN `text` → `id` join gives the ids the Bulk Item Exchange queries take (see exchange.ts).
 // Both are cached to .cache/trade.json and refreshed once a day (the image hash changes when GGG re-exports art).
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -17,7 +18,7 @@ const CDN = 'https://web.poecdn.com';
 const CACHE_DIR = path.resolve(process.cwd(), '.cache');
 const CACHE_FILE = path.join(CACHE_DIR, 'trade.json');
 /** Bump when CacheFile gains fields so an old .cache/trade.json is re-downloaded. */
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const TTL_MS = 24 * 3600 * 1000;
 const RETRY_MS = 10 * 60 * 1000;
 
@@ -25,9 +26,12 @@ const RETRY_MS = 10 * 60 * 1000;
 export type IconMap = Record<string, string>;
 /** English item name (trade site `text`, same as RePoE `name`) → Japanese item name */
 export type JaNameMap = Record<string, string>;
+/** English item name → trade-site id ("exalted"), the form trade2/exchange queries use */
+export type TradeIdMap = Record<string, string>;
 export interface TradeStatic {
 	icons: IconMap;
 	ja: JaNameMap;
+	tradeIds: TradeIdMap;
 	/** true when the JP download failed and `ja` is carried over from the previous cache (or empty) */
 	jaStale: boolean;
 }
@@ -78,6 +82,16 @@ export function buildJaNameMap(en: StaticData, jp: StaticData): JaNameMap {
 	return map;
 }
 
+/** EN `text` → entry `id`. First occurrence wins; `sep` rows are UI separators with no item behind them. */
+export function buildTradeIdMap(data: StaticData): TradeIdMap {
+	const map: TradeIdMap = {};
+	for (const e of entries(data)) {
+		if (e.id === 'sep' || !e.text || map[e.text]) continue;
+		map[e.text] = e.id;
+	}
+	return map;
+}
+
 async function fetchStatic(fetchImpl: typeof fetch, url: string): Promise<StaticData> {
 	const res = await fetchImpl(url, { headers: { 'User-Agent': 'poe2-arb/0.1', Accept: 'application/json' } });
 	if (!res.ok) throw new Error(`trade2 static (${url}): HTTP ${res.status}`);
@@ -91,8 +105,9 @@ async function fetchStatic(fetchImpl: typeof fetch, url: string): Promise<Static
  */
 export function mergeStatic(en: StaticData, jp: PromiseSettledResult<StaticData>, previous: TradeStatic | null): TradeStatic {
 	const icons = buildIconMap(en);
-	if (jp.status === 'fulfilled') return { icons, ja: buildJaNameMap(en, jp.value), jaStale: false };
-	return { icons, ja: previous?.ja ?? {}, jaStale: true };
+	const tradeIds = buildTradeIdMap(en);
+	if (jp.status === 'fulfilled') return { icons, tradeIds, ja: buildJaNameMap(en, jp.value), jaStale: false };
+	return { icons, tradeIds, ja: previous?.ja ?? {}, jaStale: true };
 }
 
 /** EN data is required (icons); see mergeStatic for the JP failure case. */
@@ -106,10 +121,10 @@ async function download(fetchImpl: typeof fetch, previous: CacheFile | null): Pr
 	return file;
 }
 
-const EMPTY: TradeStatic = { icons: {}, ja: {}, jaStale: false };
+const EMPTY: TradeStatic = { icons: {}, ja: {}, tradeIds: {}, jaStale: false };
 
 /**
- * Icon and Japanese-name maps, refreshed at most once per TTL. Never throws: on a failed refresh the stale
+ * Icon, Japanese-name and trade-id maps, refreshed at most once per TTL. Never throws: on a failed refresh the stale
  * cache is kept (and retried after RETRY_MS, not on every request); with no cache at all empty maps are
  * returned, so the UI just shows English names without icons. A cache whose JP half is stale is also
  * retried after RETRY_MS rather than waiting out the TTL.
