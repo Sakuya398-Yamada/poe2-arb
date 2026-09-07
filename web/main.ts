@@ -38,7 +38,8 @@ function trim(n: number): string {
 function loopKey(l: Loop) { return `${l.from}>${l.itemId}>${l.to}`; }
 
 /**
- * Item / hub icon. Images come straight from web.poecdn.com (signed URLs the server got from the trade site);
+ * Item / hub icon. Images load straight from web.poecdn.com (signed URLs the server got from the trade site),
+ * or from the community wiki for the items the trade site doesn't list;
  * a missing or broken image degrades to an empty box so rows stay aligned.
  */
 function icon(url: string | undefined, title: string, size: 'sm' | 'lg' = 'sm'): string {

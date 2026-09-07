@@ -59,10 +59,15 @@ export async function loadNames(fetchImpl: typeof fetch = fetch): Promise<NameMa
 	return map;
 }
 
-export function makeResolver(map: NameMap, iconFor: (art: string) => string | undefined = () => undefined) {
+/** `iconForName` is the fallback for items the trade site has no entry for (see server/wiki.ts). */
+export function makeResolver(
+	map: NameMap,
+	iconFor: (art: string) => string | undefined = () => undefined,
+	iconForName: (name: string) => string | undefined = () => undefined,
+) {
 	return (id: string): NameEntry & { icon?: string } => {
 		const e = map[id] ?? { name: id.split('/').pop() ?? id, category: categoryOf(id, '') };
-		const icon = e.art ? iconFor(e.art) : undefined;
+		const icon = (e.art ? iconFor(e.art) : undefined) ?? iconForName(e.name);
 		return icon ? { ...e, icon } : { ...e };
 	};
 }

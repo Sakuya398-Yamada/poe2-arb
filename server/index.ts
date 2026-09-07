@@ -9,6 +9,7 @@ import { buildBook, findLoops } from './arb.js';
 import { fetchWindow } from './ggg.js';
 import { loadIcons } from './icons.js';
 import { loadNames, makeResolver } from './names.js';
+import { loadWikiIcons } from './wiki.js';
 import { HUB_IDS, type Hub, type LoopsResponse } from '../shared/types.js';
 
 const PORT = Number(process.env.PORT ?? 8765);
@@ -28,7 +29,16 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 
 export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Promise<LoopsResponse> {
 	const [names, icons, win] = await Promise.all([loadNames(), loadIcons(), fetchWindow(league, hours)]);
-	const resolve = makeResolver(names, (art) => icons[art]);
+	// Items the trade site lists no icon for fall back to the community wiki, looked up by name.
+	const unlisted = new Set<string>();
+	for (const m of win.markets) {
+		for (const id of m.market_pair) {
+			const e = names[id];
+			if (e && !(e.art && icons[e.art])) unlisted.add(e.name);
+		}
+	}
+	const wiki = await loadWikiIcons([...unlisted]);
+	const resolve = makeResolver(names, (art) => icons[art], (name) => wiki[name]);
 	const book = buildBook(win.markets);
 	const { loops, skipped } = findLoops(book, hubs[0], hubs[1], resolve);
 	const hubIcons: LoopsResponse['hubIcons'] = {};
