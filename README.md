@@ -25,6 +25,7 @@ npm run typecheck
 | 約定データ | `GET https://web.poecdn.com/api/currency-exchange/poe2/<unixHour>` | GGG公式・認証不要。**完了した1時間**の全ペアの集計。約5分遅延。`markets` が空 = その時間はまだ無い |
 | アイテム名 | `https://repoe-fork.github.io/poe2/base_items.json` | 初回のみDL(8MB)→ `.cache/names.json` に名前・カテゴリ・アート(dds)パスだけ保存。取得に失敗しても一覧は止めず、IDの末尾(例: `CurrencyAddModToRare`)を名前として表示し10分後に再試行 |
 | アイコン | `GET https://www.pathofexile.com/api/trade2/data/static` | 公式トレードサイトの静的データ(180KB・認証不要)。署名付き画像URLを含む。`.cache/trade.json` に保存し1日1回更新 |
+| アイコン(補完) | `GET https://www.poe2wiki.net/w/api.php?action=query&prop=imageinfo` | 上の静的データに項目が無いアイテムだけを名前で問い合わせる。`.cache/wiki-icons.json` に保存(空振りも記録し1週間は再問い合わせしない) |
 | 日本語アイテム名 | `GET https://jp.pathofexile.com/api/trade2/data/static` | 上と同じ構造の日本語版(190KB・認証不要)。`id` で英語版と結合し「英名 → 日本語名」の表を作って `.cache/trade.json` に同居させる |
 | ゴールド手数料 | `https://poe2db.tw/us/Currency_Exchange` | ゲームデータ `CurrencyExchange.GoldPurchaseFee` の poe2db 表示(HTML 570KB)をアイテム名→gold にパース。`.cache/gold.json` に保存し週1回更新。取れなければ手数料「?」表示で続行 |
 
@@ -46,9 +47,19 @@ PoE2 固有のアートは `web.poecdn.com/image/Art/2DItems/….png` の旧形�
 `web.poecdn.com/gen/image/<base64パラメータ>/<ハッシュ>/<名前>.png` という**署名付きURL**でしか配信されない。
 署名は生成できないので、公式トレードサイトの静的データ(`trade2/data/static`)に載っている画像URLを使う。
 base64 部分には `{"f":"2DItems/Currency/…","scale":1,"realm":"poe2"}` の形でアートパスが入っているので、
-名前ではなく RePoE の `visual_identity.dds_file` と突き合わせている(2026-09-07 時点で取引所に出ている 670 種のうち 661 種が一致。
-残りはピナクルキー・アイドル等で、アイコン無しの空枠になる)。
-画像はブラウザが poecdn から直接読む(サーバは中継しない)。
+名前ではなく RePoE の `visual_identity.dds_file` と突き合わせている。
+
+2026-09-07 時点で取引所に出ている 660 種(時間帯により増減する)のうち 652 種がこれで一致する。残る 8 種
+(The Triskelion Reforged / Shattered Triskelion / Raven's Reflection / Panther・Hawk・Stoat Idol /
+Helbrym's Hide / Eonyr's Thunder)は**トレード静的データに項目自体が無く**、旧形式の
+`web.poecdn.com/image/Art/2DItems/….png` も 404 なので、署名付きURLを得る手段が無い。
+この 8 種はコミュニティ wiki (poe2wiki.net) が `File:<アイテム名> inventory icon.png` という
+固定タイトルで同じアイコンを公開しているので、MediaWiki の `imageinfo` API で名前から画像URLを引いて補完する
+(`server/wiki.ts`)。RePoE と wiki で metadata id が食い違うアイテムがあるため、突き合わせは表示名で行う。
+問い合わせるのは静的データで解決できなかった名前だけで、結果は空振りも含めてキャッシュする。
+wiki 側にも無ければ従来どおり空枠のままで、一覧全体は止まらない。
+
+画像はブラウザが poecdn / poe2wiki から直接読む(サーバは中継しない)。
 
 ### 日本語アイテム名
 
@@ -142,12 +153,14 @@ server/ggg.ts     GGG API 取得(最新の完了時間の探索・キャッシ�
 server/arb.ts     純粋関数: レシオ正規化・Book 構築・ループ計算
 server/names.ts   RePoE から名前解決
 server/trade.ts   公式トレード静的データ(EN/JP)からアイコンURLと日本語名を解決
+server/wiki.ts    トレード静的データに無いアイテムのアイコンを poe2wiki から補完
 server/gold.ts    poe2db からゴールド手数料表を取得
 shared/types.ts   サーバ/フロント共通型
 web/              Vite + 素の TypeScript(依存なし)
 test/arb.test.ts  実データの値を使ったユニットテスト(レシオの向き・VWAP・再現性スコア)
 test/ggg.test.ts  fetchWindow のスタブテスト(バケット分割・取得回数)
 test/trade.test.ts トレード静的データの変換と名前解決のテスト
+test/wiki.test.ts  wiki アイコン補完(タイトル変換・imageinfo 解析・優先順位)のテスト
 ```
 
 ## API

@@ -10,6 +10,7 @@ import { fetchWindow } from './ggg.js';
 import { loadGoldFees } from './gold.js';
 import { loadTradeStatic } from './trade.js';
 import { loadNames, makeResolver } from './names.js';
+import { loadWikiIcons } from './wiki.js';
 import { HUB_IDS, type Hub, type LoopsResponse } from '../shared/types.js';
 
 const PORT = Number(process.env.PORT ?? 8765);
@@ -31,7 +32,16 @@ function json(res: http.ServerResponse, status: number, body: unknown) {
 
 export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Promise<LoopsResponse> {
 	const [names, trade, goldFees, win] = await Promise.all([loadNames(), loadTradeStatic(), loadGoldFees(), fetchWindow(league, hours)]);
-	const resolve = makeResolver(names, (art) => trade.icons[art], (name) => trade.ja[name]);
+	// Items the trade site has no entry for at all fall back to the community wiki, looked up by name.
+	const unlisted = new Set<string>();
+	for (const m of win.markets) {
+		for (const id of m.market_pair) {
+			const e = names[id];
+			if (e && !(e.art && trade.icons[e.art])) unlisted.add(e.name);
+		}
+	}
+	const wiki = await loadWikiIcons([...unlisted]);
+	const resolve = makeResolver(names, (art) => trade.icons[art], (name) => trade.ja[name], (name) => wiki[name]);
 	const book = buildBook(win.markets);
 	const goldPerHub = GOLD_PER_EX > 0 ? goldPerHubFromEx(GOLD_PER_EX, book.hubRates) : {};
 	const gold = { feeOf: (id: string) => { const n = names[id]?.name; return n === undefined ? undefined : goldFees[n]; }, goldPerHub };

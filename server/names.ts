@@ -101,15 +101,19 @@ export function createNameLoader(opts: NameLoaderOptions = {}) {
 
 export const loadNames = createNameLoader();
 
-/** `jaFor` is keyed by the English name (RePoE `name` == trade-site EN `text`), see trade.ts for why not by art. */
+/**
+ * `jaFor` is keyed by the English name (RePoE `name` == trade-site EN `text`), see trade.ts for why not by art.
+ * `iconForName` is the icon fallback for items the trade site has no entry for at all, see wiki.ts.
+ */
 export function makeResolver(
 	map: NameMap,
 	iconFor: (art: string) => string | undefined = () => undefined,
 	jaFor: (name: string) => string | undefined = () => undefined,
+	iconForName: (name: string) => string | undefined = () => undefined,
 ) {
 	return (id: string): NameEntry & { icon?: string; ja?: string } => {
 		const e = map[id] ?? { name: id.split('/').pop() ?? id, category: categoryOf(id, '') };
-		const icon = e.art ? iconFor(e.art) : undefined;
+		const icon = (e.art ? iconFor(e.art) : undefined) ?? iconForName(e.name);
 		const ja = jaFor(e.name);
 		return { ...e, ...(icon ? { icon } : {}), ...(ja ? { ja } : {}) };
 	};

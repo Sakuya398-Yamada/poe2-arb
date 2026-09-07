@@ -23,7 +23,8 @@ poe2-arb/
 │   ├── ggg.ts           # GGG API 取得（最新完了時間の探索・メモリキャッシュ・N時間マージ）
 │   ├── arb.ts           # 純粋関数: レシオ正規化・Book 構築・ループ計算
 │   ├── names.ts         # RePoE から名前・カテゴリ・アートパス解決（.cache/names.json）
-│   └── trade.ts         # 公式トレード静的データ(EN/JP)からアイコンURL・日本語名解決（.cache/trade.json）
+│   ├── trade.ts         # 公式トレード静的データ(EN/JP)からアイコンURL・日本語名解決（.cache/trade.json）
+│   └── wiki.ts          # トレード静的データに無いアイテムのアイコンを poe2wiki から補完（.cache/wiki-icons.json）
 ├── shared/
 │   └── types.ts         # サーバ/フロント共通型・ハブ通貨定義
 ├── web/                 # Vite root。index.html / main.ts / style.css
