@@ -112,10 +112,15 @@ export interface ReferenceLeg {
 	price: number;
 	/** units of the thing you receive that this one listing can supply */
 	stock: number;
-	/** listings left after dropping outliers (outside 1/3〜3× of the VWAP) */
+	/** listings inside the VWAP band (1/3〜3×) */
 	offers: number;
-	/** listings returned before filtering */
+	/** listings returned for this pair before filtering */
 	listed: number;
+	/**
+	 * false = every listing sits outside the band, so `price` is the best one overall and the two markets disagree.
+	 * The reference profit is not computed in that case: it would mix an exchange VWAP with an unrelated price.
+	 */
+	inBand: boolean;
 }
 
 export interface LoopReference {

@@ -45,7 +45,9 @@ export function parseExchange(body: TradeResponse): ExchangeResult {
 /**
  * Best listing trading `base` against `quote`, as quote units per 1 base.
  * side 'buy': you pay quote to get base → lowest price wins. 'sell': you give base for quote → highest wins.
- * Listings outside vwap/OUTLIER_FACTOR..vwap*OUTLIER_FACTOR are ignored (no filter when vwap is unknown).
+ * Listings outside vwap/OUTLIER_FACTOR..vwap*OUTLIER_FACTOR are preferred; when every listing falls outside
+ * (the two markets disagree, e.g. an exchange VWAP built from a handful of odd trades) the best one is still
+ * returned with `inBand: false` so the caller can show the gap instead of pretending there is no market.
  */
 export function bestOffer(offers: Offer[], base: string, quote: string, side: 'buy' | 'sell', vwap?: number): ReferenceLeg | null {
 	const seen: { price: number; stock: number }[] = [];
@@ -57,12 +59,13 @@ export function bestOffer(offers: Offer[], base: string, quote: string, side: 'b
 			seen.push({ price, stock: Math.floor(o.stock / price) }); // stock is in quote units here → convert to base
 		}
 	}
+	if (seen.length === 0) return null;
 	const inRange = vwap && Number.isFinite(vwap) && vwap > 0
 		? seen.filter((s) => s.price >= vwap / OUTLIER_FACTOR && s.price <= vwap * OUTLIER_FACTOR)
 		: seen;
-	if (inRange.length === 0) return null;
-	const best = inRange.reduce((a, b) => (side === 'buy' ? b.price < a.price : b.price > a.price) ? b : a);
-	return { price: best.price, stock: best.stock, offers: inRange.length, listed: seen.length };
+	const pool = inRange.length > 0 ? inRange : seen;
+	const best = pool.reduce((a, b) => (side === 'buy' ? b.price < a.price : b.price > a.price) ? b : a);
+	return { price: best.price, stock: best.stock, offers: inRange.length, listed: seen.length, inBand: inRange.length > 0 };
 }
 
 // --- fetching: per-query cache, pacing against the advertised windows, 429 back-off ---
@@ -72,15 +75,19 @@ const sentAt: number[] = [];
 let blockedUntil = 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Forget cache, pacing history and back-off. For tests. */
-export function resetTradeState(): void {
+let pacing = true;
+
+/** Forget cache, pacing history and back-off. For tests, which also skip the real waits with `pacing: false`. */
+export function resetTradeState(opts: { pacing?: boolean } = {}): void {
 	cache.clear();
 	sentAt.length = 0;
 	blockedUntil = 0;
+	pacing = opts.pacing ?? true;
 }
 
 /** Waits until one more request fits in every rate-limit window, then records it. */
 async function pace(): Promise<void> {
+	if (!pacing) return;
 	for (;;) {
 		const now = Date.now();
 		while (sentAt.length && now - sentAt[0] > LIMITS[LIMITS.length - 1][1] * 1000) sentAt.shift();
@@ -154,19 +161,25 @@ export async function fetchReference(league: string, reqs: LoopRequest[], fetchI
 			return null;
 		}
 	};
-	// One leg for several items: batch first, then fill in items the batch cut off.
+	/**
+	 * Offers for one leg of several items. One batched query answers all of them when the trade site returns the
+	 * whole result set. A truncated answer is NOT a usable sample — the page is ordered by the amount offered, not
+	 * by the ratio, so a deep market comes back showing only its worst listings — and every item is re-queried alone.
+	 */
 	const legOffers = async (batchHave: string[], batchWant: string[], items: string[], itemSide: 'want' | 'have'): Promise<Map<string, Offer[]>> => {
 		const out = new Map<string, Offer[]>();
 		if (items.length === 0) return out;
-		const batch = await query(batchHave, batchWant);
-		if (!batch) return out;
-		for (const it of items) out.set(it, batch.offers.filter((o) => (itemSide === 'want' ? o.get : o.give) === it));
-		if (batch.truncated) {
-			for (const it of items) {
-				if (out.get(it)?.length) continue;
-				const single = await query(itemSide === 'want' ? batchHave : [it], itemSide === 'want' ? [it] : batchWant);
-				if (single) out.set(it, single.offers);
+		const single = async (it: string) => query(itemSide === 'want' ? batchHave : [it], itemSide === 'want' ? [it] : batchWant);
+		if (items.length > 1) {
+			const batch = await query(batchHave, batchWant);
+			if (batch && !batch.truncated) {
+				for (const it of items) out.set(it, batch.offers.filter((o) => (itemSide === 'want' ? o.get : o.give) === it));
+				return out;
 			}
+		}
+		for (const it of items) {
+			const r = await single(it);
+			if (r) out.set(it, r.offers);
 		}
 		return out;
 	};
@@ -192,8 +205,12 @@ export async function fetchReference(league: string, reqs: LoopRequest[], fetchI
 			ref.buy = bestOffer(buys.get(r.item!) ?? [], r.item!, fromId, 'buy', r.buyVwap);
 			ref.sell = bestOffer(sells.get(r.item!) ?? [], r.item!, toId, 'sell', r.sellVwap);
 			ref.convert = conv ? bestOffer(conv.offers, toId, fromId, 'sell', r.convertVwap) : null;
-			if (ref.buy && ref.sell && ref.convert) ref.profit = (ref.sell.price * ref.convert.price) / ref.buy.price;
-			else if (!ref.note) ref.note = [!ref.buy && '買い', !ref.sell && '売り', !ref.convert && '換算'].filter(Boolean).join('・') + 'の出品なし';
+			const legs = [ref.buy, ref.sell, ref.convert];
+			const missing = [!ref.buy && '買い', !ref.sell && '売り', !ref.convert && '換算'].filter(Boolean);
+			const offBand = [ref.buy?.inBand === false && '買い', ref.sell?.inBand === false && '売り', ref.convert?.inBand === false && '換算'].filter(Boolean);
+			if (legs.every((l) => l?.inBand)) ref.profit = (ref.sell!.price * ref.convert!.price) / ref.buy!.price;
+			else if (missing.length > 0) ref.note = `${missing.join('・')}の出品なし`;
+			else ref.note = `${offBand.join('・')}が約定VWAPと乖離`;
 		}
 	}
 	return { loops: reqs.map((r) => out.get(r)!), requests, errors };

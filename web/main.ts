@@ -1,4 +1,4 @@
-import { HUB_LABEL, type Hub, type Loop, type LoopsResponse } from '../shared/types.js';
+import { HUB_LABEL, type Hub, type Loop, type LoopReference, type LoopsResponse, type ReferenceLeg, type ReferenceResponse } from '../shared/types.js';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const leagueSel = $<HTMLSelectElement>('#league');
@@ -11,12 +11,18 @@ const q = $<HTMLInputElement>('#q');
 const status = $<HTMLElement>('#status');
 const tbody = $<HTMLTableSectionElement>('#tbl tbody');
 const detail = $<HTMLElement>('#detail');
+const refBtn = $<HTMLButtonElement>('#ref');
+const refStatus = $<HTMLElement>('#refStatus');
 
 type SortKey = 'name' | 'buy' | 'sell' | 'vwap' | 'cons' | 'opt' | 'cap';
 let sortKey: SortKey = 'vwap';
 let sortDesc = true;
 let data: LoopsResponse | null = null;
 let selected: string | null = null;
+/** trade-site reference prices, keyed by loopKey; only the loops fetched last time */
+let ref: ReferenceResponse | null = null;
+const refByKey = new Map<string, LoopReference>();
+const REF_LOOPS = 5;
 
 const pct = (m: number) => `${m >= 1 ? '+' : ''}${((m - 1) * 100).toFixed(1)}%`;
 const cls = (m: number) => (m > 1 ? 'pos' : m < 1 ? 'neg' : '');
@@ -100,6 +106,45 @@ async function load() {
 	}
 }
 
+/** Trade-site listings for the top rows of the current table. One button press = one fetch (server caches 5 min). */
+async function loadRef() {
+	if (!data) return;
+	const keys = filtered().slice(0, REF_LOOPS).map(loopKey);
+	if (keys.length === 0) { refStatus.textContent = '表示中のループなし'; return; }
+	refBtn.disabled = true;
+	refStatus.textContent = '出品相場を取得中…（レート制限に合わせて送るので最大2分ほど）';
+	try {
+		const p = new URLSearchParams({ league: leagueSel.value, hours: hoursSel.value, hubs: hubsSel.value, loops: keys.join(',') });
+		const res = await fetch(`/api/reference?${p}`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}: ${((await res.json()) as { error?: string }).error ?? ''}`);
+		ref = (await res.json()) as ReferenceResponse;
+		refByKey.clear();
+		for (const r of ref.loops) refByKey.set(`${r.from}>${r.itemId}>${r.to}`, r);
+		const err = ref.errors.length ? ` <span class="err">${esc(ref.errors.join(' / '))}</span>` : '';
+		refStatus.innerHTML = `出品相場 ${fmtTime(ref.fetchedAt)} 取得 (${ref.loops.length} ループ, ${ref.requests} リクエスト)${err}`;
+	} catch (e) {
+		refStatus.innerHTML = `<span class="err">出品相場の取得失敗: ${esc((e as Error).message)}</span>`;
+	} finally {
+		refBtn.disabled = false;
+	}
+	render();
+	if (selected) { const l = data.loops.find((x) => loopKey(x) === selected); if (l) renderDetail(l); }
+}
+
+/** "出品相場" cell: reference profit for fetched loops, a note when a leg is missing, blank otherwise */
+function refCell(l: Loop): string {
+	const r = refByKey.get(loopKey(l));
+	if (!r) return '<td class="num ref"></td>';
+	if (r.profit === null) return `<td class="num ref"><span class="k">${esc(r.note ?? '—')}</span></td>`;
+	return `<td class="num ref ${cls(r.profit)}"><b>${pct(r.profit)}</b> <span class="rng">在庫 ${Math.min(r.buy!.stock, r.sell!.stock)} 個</span></td>`;
+}
+
+function refLeg(leg: ReferenceLeg | null, fmt: (price: number) => string): string {
+	if (!leg) return '<span class="k">出品なし</span>';
+	if (!leg.inBand) return `<code class="neg">${fmt(leg.price)}</code> <span class="k">(出品 ${leg.listed} 件すべて VWAP の 1/3〜3倍の外。約定VWAPと乖離)</span>`;
+	return `<code>${fmt(leg.price)}</code> <span class="k">(在庫 ${leg.stock}, 出品 ${leg.offers}${leg.listed > leg.offers ? ` / 外れ値 ${leg.listed - leg.offers} 除外` : ''})</span>`;
+}
+
 function renderStatus() {
 	if (!data) return;
 	const [a, b] = data.hubs;
@@ -153,11 +198,12 @@ function render() {
 			`<td class="num ${cls(l.profit.vwap)}"><b>${pct(l.profit.vwap)}</b></td>` +
 			`<td class="num ${cls(l.profit.conservative)}">${pct(l.profit.conservative)}</td>` +
 			`<td class="num ${cls(l.profit.optimistic)}">${pct(l.profit.optimistic)}</td>` +
+			refCell(l) +
 			`<td class="num">${l.capacityItems} <span class="rng">(買${l.buy.volumeItems} / 売${l.sell.volumeItems} = ${l.sell.volumeHub} ${hubShort(l.sell.hub)})</span></td>`;
 		tr.addEventListener('click', () => { selected = loopKey(l); renderDetail(l); render(); });
 		tbody.append(tr);
 	});
-	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="10" class="l">条件に合うループなし</td></tr>';
+	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="11" class="l">条件に合うループなし</td></tr>';
 }
 
 function renderDetail(l: Loop) {
@@ -166,6 +212,19 @@ function renderDetail(l: Loop) {
 	const items = start / l.buy.vwap;
 	const got = items * l.sell.vwap;
 	const back = got * l.convert.vwap;
+	const r = refByKey.get(loopKey(l));
+	const refHtml = !r
+		? `<p class="k ref">出品相場: 未取得（「出品相場を取得」で上位 ${REF_LOOPS} ループ分を取得）</p>`
+		: `<h3>出品相場 <span class="k">(トレードサイトのプレイヤー出品・手渡し取引)</span></h3>` +
+			`<ol class="ref">` +
+			`<li>${hubShort(l.from)} で買う: ${refLeg(r.buy, (p) => fmtPrice(p, l.buy.hub) + ' / 個')}</li>` +
+			`<li>${hubShort(l.to)} で売る: ${refLeg(r.sell, (p) => fmtPrice(p, l.sell.hub) + ' / 個')}</li>` +
+			`<li>${hubShort(l.to)} → ${hubShort(l.from)}: ${refLeg(r.convert, (p) => `1 ${hubShort(l.to)} = ${trim(p)} ${hubShort(l.from)}`)}</li>` +
+			`</ol>` +
+			(r.profit !== null
+				? `<p>最良出品で回した場合: <b class="${cls(r.profit)}">${pct(r.profit)}</b> <span class="k">(在庫の上限 ${Math.min(r.buy!.stock, r.sell!.stock)} 個)</span></p>`
+				: `<p class="k">${esc(r.note ?? '出品なし')}</p>`) +
+			`<p class="k">※ ゲーム内取引所の板ではない。VWAP の 1/3〜3倍から外れた出品は冗談出品として除外。${ref ? fmtTime(ref.fetchedAt) + ' 取得' : ''}</p>`;
 	detail.hidden = false;
 	detail.innerHTML =
 		`<button class="close" id="closeDetail" title="閉じる">×</button>` +
@@ -180,7 +239,8 @@ function renderDetail(l: Loop) {
 		`<p><span class="k">VWAPでの試算 (${start} ${hubShort(l.from)} 開始):</span><br>` +
 		`${start} ${hubShort(l.from)} → ${trim(items)} 個 → ${trim(got)} ${hubShort(l.to)} → <b class="${cls(l.profit.vwap)}">${trim(back)} ${hubShort(l.from)}</b> (${pct(l.profit.vwap)})</p>` +
 		`<p class="k">保守(極端値) ${pct(l.profit.conservative)} ／ 楽観(極端値) ${pct(l.profit.optimistic)}<br>取引数の目安: ${l.capacityItems} 個/窓</p>` +
-		`<p class="k">※ 完了した直近1時間の「約定」の集計であって、今の板ではない。VWAPは約定量で加重した平均、幅(保守/楽観)は1件の変な約定でも大きく振れる。実行前にゲーム内でAltキーを押して競合注文を確認。</p>`;
+		`<p class="k">※ 完了した直近1時間の「約定」の集計であって、今の板ではない。VWAPは約定量で加重した平均、幅(保守/楽観)は1件の変な約定でも大きく振れる。実行前にゲーム内でAltキーを押して競合注文を確認。</p>` +
+		refHtml;
 }
 
 detail.addEventListener('click', (e) => {
@@ -204,6 +264,7 @@ for (const th of document.querySelectorAll<HTMLTableCellElement>('th[data-sort]'
 for (const el of [leagueSel, hubsSel, hoursSel]) el.addEventListener('change', load);
 for (const el of [dirSel, minProfit, minCap, q]) el.addEventListener('input', () => { persist(); render(); });
 $('#refresh').addEventListener('click', load);
+refBtn.addEventListener('click', loadRef);
 
 // Data only changes once an hour (plus ~5 min delay). Poll every 5 minutes.
 setInterval(load, 5 * 60 * 1000);

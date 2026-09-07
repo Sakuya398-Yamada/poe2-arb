@@ -31,6 +31,8 @@
 			<label>最低取引数 <input id="minCap" type="number" value="10" step="1" min="0" style="width:4.5em" /></label>
 			<label>検索 <input id="q" type="search" placeholder="item name" /></label>
 			<button id="refresh">更新</button>
+			<button id="ref" title="表示中の上位5ループについて、公式トレードサイトのプレイヤー出品（手渡し取引）の最良価格を取得する。ゲーム内取引所の板ではない。5分キャッシュ。レート制限に合わせて送るので最大2分ほどかかる">出品相場を取得</button>
+			<span id="refStatus" class="refstatus"></span>
 		</div>
 	</header>
 
@@ -50,6 +52,7 @@
 						<th data-sort="vwap" class="sorted" title="全工程を約定量加重平均レシオ(VWAP)で計算。最も現実に近い推定">利益(VWAP)</th>
 						<th data-sort="cons" title="全工程を不利な側の極端値で計算。1件の変な約定で大きく振れる下限">利益(保守)</th>
 						<th data-sort="opt" title="全工程を有利な側の極端値で計算。上限">利益(楽観)</th>
+						<th title="公式トレードサイトのプレイヤー出品（手渡し取引）の最良価格で計算した参考利益。「出品相場を取得」で上位5ループ分だけ埋まる。ゲーム内取引所の板ではない">出品相場</th>
 						<th data-sort="cap" title="min(買い側の約定数, 売り側の約定数)。括弧内は買い側/売り側の約定数と、売り側で動いたハブ通貨の量。売り側が薄いループは再現性が低い">取引数</th>
 					</tr>
 				</thead>
@@ -61,6 +64,7 @@
 
 	<footer>
 		データ: GGG公式 Currency Exchange API(1時間ごとの約定集計・約5分遅延・完了した時間のみ)。板の現在値ではないので、実行前にゲーム内で必ずレシオを確認してね。ゴールド手数料は含んでいない。名前: RePoE (PoE2)。
+		出品相場: 公式トレードサイトの Bulk Item Exchange(プレイヤー出品・ウィスパーして手渡し)。ゲーム内取引所の板ではなく、参考値。
 	</footer>
 
 	<script type="module" src="./main.ts"></script>
