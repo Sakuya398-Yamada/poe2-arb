@@ -27,7 +27,7 @@ poe2-arb/
 │   └── wiki.ts          # トレード静的データに無いアイテムのアイコンを poe2wiki から補完（.cache/wiki-icons.json）
 ├── shared/
 │   └── types.ts         # サーバ/フロント共通型・ハブ通貨定義
-├── web/                 # Vite root。index.html / main.ts / style.css
+├── web/                 # Vite root。index.html / main.ts / style.css / filter.ts（範囲フィルタの純粋関数）
 ├── test/                # vitest。*.test.ts
 ├── scripts/dev.mjs      # tsx watch + vite を同時起動
 └── .claude/
