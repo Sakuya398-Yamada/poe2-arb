@@ -1,12 +1,14 @@
 import { HUB_LABEL, type Hub, type Loop, type LoopReference, type LoopsResponse, type ReferenceLeg, type ReferenceResponse } from '../shared/types.js';
+import { FILTER_COLS, activeCount, compileRanges, defaultRanges, passesRanges, restoreRanges, type RangeInputs } from './filter.js';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const leagueSel = $<HTMLSelectElement>('#league');
 const hubsSel = $<HTMLSelectElement>('#hubs');
 const hoursSel = $<HTMLSelectElement>('#hours');
 const dirSel = $<HTMLSelectElement>('#dir');
-const minProfit = $<HTMLInputElement>('#minProfit');
-const minCap = $<HTMLInputElement>('#minCap');
+const filterBtn = $<HTMLButtonElement>('#filterBtn');
+const filters = $<HTMLElement>('#filters');
+const filterGrid = $<HTMLElement>('#filterGrid');
 const q = $<HTMLInputElement>('#q');
 const status = $<HTMLElement>('#status');
 const tbl = $<HTMLTableElement>('#tbl');
@@ -28,6 +30,9 @@ const refByKey = new Map<string, LoopReference>();
 let refCtx = '';
 const REF_LOOPS = 5;
 const ctx = () => `${leagueSel.value}|${hoursSel.value}`;
+let ranges: RangeInputs = defaultRanges();
+/** recurrence filters only apply once the window has 2+ hours (same rule as the hidden columns) */
+const hasRecurrence = () => (data?.hoursUsed ?? 0) >= 2;
 
 const pct = (m: number) => `${m >= 1 ? '+' : ''}${((m - 1) * 100).toFixed(1)}%`;
 const cls = (m: number) => (m > 1 ? 'pos' : m < 1 ? 'neg' : '');
@@ -94,16 +99,16 @@ function restore() {
 		if (s.hubs) hubsSel.value = s.hubs;
 		if (s.hours) hoursSel.value = s.hours;
 		if (s.dir) dirSel.value = s.dir;
-		if (s.minProfit != null) minProfit.value = s.minProfit;
-		if (s.minCap != null) minCap.value = s.minCap;
 		if (s.league) leagueSel.value = s.league;
+		ranges = restoreRanges(s);
 	} catch { /* ignore */ }
+	renderFilterPanel();
 }
 function persist() {
 	try {
 		localStorage.setItem('poe2arb', JSON.stringify({
 			hubs: hubsSel.value, hours: hoursSel.value, dir: dirSel.value,
-			minProfit: minProfit.value, minCap: minCap.value, league: leagueSel.value,
+			ranges, league: leagueSel.value,
 		}));
 	} catch { /* ignore */ }
 }
@@ -133,6 +138,7 @@ async function load() {
 		// With a single hour the recurrence columns are hidden; don't keep sorting by an invisible column.
 		tbl.classList.toggle('single', data.hoursUsed < 2);
 		if (data.hoursUsed < 2 && RECURRENCE_KEYS.includes(sortKey)) setSort('vwap', true);
+		updateFilterState();
 		renderStatus();
 		render();
 	} catch (e) {
@@ -199,13 +205,11 @@ function filtered(): Loop[] {
 	if (!data) return [];
 	const [a, b] = data.hubs;
 	const dir = dirSel.value;
-	const mp = 1 + (Number(minProfit.value) || 0) / 100;
-	const mc = Number(minCap.value) || 0;
+	const rs = compileRanges(ranges, { recurrence: hasRecurrence() });
 	const s = q.value.trim().toLowerCase();
 	let rows = data.loops.filter((l) =>
 		(dir === 'both' || (dir === 'ab' ? l.from === a && l.to === b : l.from === b && l.to === a)) &&
-		l.profit.vwap >= mp &&
-		l.capacityItems >= mc &&
+		passesRanges(l, rs) &&
 		(!s || l.name.toLowerCase().includes(s) || l.ja?.toLowerCase().includes(s) || l.category.toLowerCase().includes(s)),
 	);
 	const key = (l: Loop): number | string => ({
@@ -222,6 +226,24 @@ function filtered(): Loop[] {
 		return sortDesc ? -c : c;
 	});
 	return rows;
+}
+
+/** One "label [min] 〜 [max] unit" row per filterable column; values come from and go to `ranges`. */
+function renderFilterPanel() {
+	filterGrid.innerHTML = FILTER_COLS.map((c) =>
+		`<div class="frow${c.recurrence ? ' rec' : ''}" title="${esc(c.missing ? `値なし: ${c.missing}` : '')}">` +
+		`<span class="flabel">${esc(c.label)}</span>` +
+		`<input type="number" step="${c.step}" data-key="${c.key}" data-side="min" value="${esc(ranges[c.key].min)}" placeholder="下限" aria-label="${esc(c.label)} 下限">` +
+		`〜<input type="number" step="${c.step}" data-key="${c.key}" data-side="max" value="${esc(ranges[c.key].max)}" placeholder="上限" aria-label="${esc(c.label)} 上限">` +
+		`<span class="funit">${esc(c.unit)}</span></div>`,
+	).join('');
+	updateFilterState();
+}
+/** Toggle label shows how many columns are restricted; recurrence inputs are disabled while they don't apply. */
+function updateFilterState() {
+	const n = activeCount(ranges, { recurrence: hasRecurrence() });
+	filterBtn.textContent = n ? `詳細フィルタ (${n})` : '詳細フィルタ';
+	for (const el of filterGrid.querySelectorAll<HTMLInputElement>('.rec input')) el.disabled = !hasRecurrence();
 }
 
 function render() {
@@ -323,7 +345,19 @@ for (const th of document.querySelectorAll<HTMLTableCellElement>('th[data-sort]'
 	});
 }
 for (const el of [leagueSel, hubsSel, hoursSel]) el.addEventListener('change', load);
-for (const el of [dirSel, minProfit, minCap, q]) el.addEventListener('input', () => { persist(); render(); });
+for (const el of [dirSel, q]) el.addEventListener('input', () => { persist(); render(); });
+filterGrid.addEventListener('input', (e) => {
+	const el = e.target as HTMLInputElement;
+	const key = el.dataset.key as keyof RangeInputs | undefined;
+	if (!key) return;
+	ranges[key][el.dataset.side === 'max' ? 'max' : 'min'] = el.value;
+	updateFilterState(); persist(); render();
+});
+filterBtn.addEventListener('click', () => {
+	filters.hidden = !filters.hidden;
+	filterBtn.setAttribute('aria-expanded', String(!filters.hidden));
+});
+$('#filterReset').addEventListener('click', () => { ranges = defaultRanges(); renderFilterPanel(); persist(); render(); });
 $('#refresh').addEventListener('click', load);
 refBtn.addEventListener('click', loadRef);
 

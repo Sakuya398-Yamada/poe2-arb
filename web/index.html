@@ -27,14 +27,20 @@
 				<option value="ab">A→アイテム→B→A</option>
 				<option value="ba">B→アイテム→A→B</option>
 			</select></label>
-			<label>最低利益(VWAP) <input id="minProfit" type="number" value="0" step="1" style="width:4em" />%</label>
-			<label>最低取引数 <input id="minCap" type="number" value="10" step="1" min="0" style="width:4.5em" /></label>
+			<button id="filterBtn" aria-expanded="false" aria-controls="filters" title="各列を下限〜上限で絞り込む">詳細フィルタ</button>
 			<label>検索 <input id="q" type="search" placeholder="アイテム名 (日本語 / 英語)" /></label>
 			<button id="refresh">更新</button>
 			<button id="ref" title="表示中の上位5ループについて、公式トレードサイトのプレイヤー出品（手渡し取引）の最良価格を取得する。ゲーム内取引所の板ではない。5分キャッシュ。レート制限に合わせて送るので最大2分ほどかかる">出品相場を取得</button>
 			<span id="refStatus" class="refstatus"></span>
 		</div>
 	</header>
+
+	<section id="filters" class="filters" hidden>
+		<div id="filterGrid" class="fgrid"></div>
+		<p class="k">空欄は制限なし。下限・上限はその値を含む。下限か上限を入れた列で値が無いループ（手数料不明・手数料込なし・再現性なし）は除外する。
+			買い／売りは各行の表示通貨(買いは A、売りは B の 1 個あたり)のまま比較する。再現・利益(中央値)は集計 2 時間以上のときだけ効く。
+			<button id="filterReset" type="button">既定に戻す</button></p>
+	</section>
 
 	<section id="status" class="status">読み込み中…</section>
 
