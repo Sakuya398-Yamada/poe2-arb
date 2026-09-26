@@ -4,7 +4,8 @@
 //   POST https://www.pathofexile.com/api/trade2/exchange/poe2/<league>      (no auth; observed 2026-09-07)
 //   body: {"query":{"status":{"option":"online"},"have":[ids I pay],"want":[ids I get]},"sort":{"have":"asc"}}
 // Rate limit per IP (X-Rate-Limit-Ip): 5/15s, 10/90s, 30/300s; penalties 60s/300s/1800s. We pace requests to
-// those windows, cache every query for TTL_MS and never poll on our own (the UI has a button).
+// those windows and cache every query for TTL_MS. Item legs are only fetched from the UI's button; the hub↔hub
+// conversion is also polled in the background by live.ts, which goes through the same cache and pacing.
 import type { Hub, LoopReference, ReferenceLeg } from '../shared/types.js';
 
 const BASE = 'https://www.pathofexile.com/api/trade2/exchange/poe2';
@@ -45,11 +46,11 @@ export function parseExchange(body: TradeResponse): ExchangeResult {
 /**
  * Best listing trading `base` against `quote`, as quote units per 1 base.
  * side 'buy': you pay quote to get base → lowest price wins. 'sell': you give base for quote → highest wins.
- * Listings outside vwap/OUTLIER_FACTOR..vwap*OUTLIER_FACTOR are preferred; when every listing falls outside
+ * Listings outside vwap/factor..vwap*factor are ignored when possible (factor defaults to OUTLIER_FACTOR); when every listing falls outside
  * (the two markets disagree, e.g. an exchange VWAP built from a handful of odd trades) the best one is still
  * returned with `inBand: false` so the caller can show the gap instead of pretending there is no market.
  */
-export function bestOffer(offers: Offer[], base: string, quote: string, side: 'buy' | 'sell', vwap?: number): ReferenceLeg | null {
+export function bestOffer(offers: Offer[], base: string, quote: string, side: 'buy' | 'sell', vwap?: number, factor = OUTLIER_FACTOR): ReferenceLeg | null {
 	const seen: { price: number; stock: number }[] = [];
 	for (const o of offers) {
 		if (o.give === quote && o.get === base && o.getAmount > 0 && o.giveAmount > 0) {
@@ -61,7 +62,7 @@ export function bestOffer(offers: Offer[], base: string, quote: string, side: 'b
 	}
 	if (seen.length === 0) return null;
 	const inRange = vwap && Number.isFinite(vwap) && vwap > 0
-		? seen.filter((s) => s.price >= vwap / OUTLIER_FACTOR && s.price <= vwap * OUTLIER_FACTOR)
+		? seen.filter((s) => s.price >= vwap / factor && s.price <= vwap * factor)
 		: seen;
 	const pool = inRange.length > 0 ? inRange : seen;
 	const best = pool.reduce((a, b) => (side === 'buy' ? b.price < a.price : b.price > a.price) ? b : a);
@@ -101,11 +102,14 @@ async function pace(): Promise<void> {
 	}
 }
 
-/** `sent` says whether this call actually hit the network, so callers can report the real request count. */
-async function exchange(league: string, have: string[], want: string[], fetchImpl: typeof fetch): Promise<{ data: ExchangeResult; sent: boolean }> {
+/**
+ * `sent` says whether this call actually hit the network, so callers can report the real request count.
+ * `at` is when the returned listings were fetched (earlier than now on a cache hit).
+ */
+async function exchange(league: string, have: string[], want: string[], fetchImpl: typeof fetch): Promise<{ data: ExchangeResult; sent: boolean; at: number }> {
 	const key = `${league}|${have.join(',')}|${want.join(',')}`;
 	const hit = cache.get(key);
-	if (hit && Date.now() - hit.at < TTL_MS) return { data: hit.data, sent: false };
+	if (hit && Date.now() - hit.at < TTL_MS) return { data: hit.data, sent: false, at: hit.at };
 	if (Date.now() < blockedUntil) throw new Error(`trade2 exchange: rate limited, retry in ${Math.ceil((blockedUntil - Date.now()) / 1000)}s`);
 	await pace();
 	const res = await fetchImpl(`${BASE}/${encodeURIComponent(league)}`, {
@@ -120,12 +124,19 @@ async function exchange(league: string, have: string[], want: string[], fetchImp
 	}
 	if (!res.ok) throw new Error(`trade2 exchange: HTTP ${res.status}`);
 	const data = parseExchange((await res.json()) as TradeResponse);
-	cache.set(key, { at: Date.now(), data });
-	return { data, sent: true };
+	const at = Date.now();
+	cache.set(key, { at, data });
+	return { data, sent: true, at };
 }
 
 export async function fetchExchange(league: string, have: string[], want: string[], fetchImpl: typeof fetch = fetch): Promise<ExchangeResult> {
 	return (await exchange(league, have, want, fetchImpl)).data;
+}
+
+/** Like fetchExchange, plus when the listings were fetched (unix ms). Throws on HTTP errors and while rate limited. */
+export async function fetchListings(league: string, have: string[], want: string[], fetchImpl: typeof fetch = fetch): Promise<{ data: ExchangeResult; at: number }> {
+	const { data, at } = await exchange(league, have, want, fetchImpl);
+	return { data, at };
 }
 
 /** What the caller knows about one loop: trade-site ids for every leg and the VWAPs used to reject outliers. */

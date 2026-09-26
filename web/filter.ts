@@ -2,7 +2,7 @@
 // Bounds are kept as the raw input text ('' = no limit) and converted to the loop's own units when compiled.
 import type { Loop } from '../shared/types.js';
 
-export type FilterKey = 'buy' | 'sell' | 'vwap' | 'cons' | 'opt' | 'fee' | 'net' | 'cap' | 'rec' | 'med';
+export type FilterKey = 'buy' | 'sell' | 'vwap' | 'live' | 'cons' | 'opt' | 'fee' | 'net' | 'cap' | 'rec' | 'med';
 export interface BoundInput { min: string; max: string }
 export type RangeInputs = Record<FilterKey, BoundInput>;
 
@@ -31,6 +31,7 @@ export const FILTER_COLS: FilterCol[] = [
 	{ key: 'buy', label: '買い', unit: 'ハブ/個', step: 'any', value: (l) => l.buy.vwap, toNative: id },
 	{ key: 'sell', label: '売り', unit: 'ハブ/個', step: 'any', value: (l) => l.sell.vwap, toNative: id },
 	{ key: 'vwap', label: '利益(VWAP)', unit: '%', step: '1', value: (l) => l.profit.vwap, toNative: pctToMult },
+	{ key: 'live', label: '利益(換算ライブ)', unit: '%', step: '1', value: (l) => l.profit.live, toNative: pctToMult, missing: '換算ライブ未取得・約定VWAPと乖離' },
 	{ key: 'cons', label: '利益(保守)', unit: '%', step: '1', value: (l) => l.profit.conservative, toNative: pctToMult },
 	{ key: 'opt', label: '利益(楽観)', unit: '%', step: '1', value: (l) => l.profit.optimistic, toNative: pctToMult },
 	{ key: 'fee', label: '手数料', unit: 'g', step: '100', value: (l) => l.goldFee?.total, toNative: id, missing: '手数料不明' },
