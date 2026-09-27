@@ -277,7 +277,7 @@ function render() {
 			`<td class="l route">${route(l)}</td>` +
 			`<td class="num">${fmtPrice(l.buy.vwap, l.buy.hub)} <span class="rng">(${fmtPrice(l.buy.worst, l.buy.hub)}〜${fmtPrice(l.buy.best, l.buy.hub)})</span></td>` +
 			`<td class="num">${fmtPrice(l.sell.vwap, l.sell.hub)} <span class="rng">(${fmtPrice(l.sell.worst, l.sell.hub)}〜${fmtPrice(l.sell.best, l.sell.hub)})</span></td>` +
-			`<td class="num">${trim(l.convert.vwap)} <span class="rng">(${trim(l.convert.worst)}〜${trim(l.convert.best)})</span></td>` +
+			`<td class="num">${fmtPrice(l.convert.vwap, l.from)} <span class="rng">(${fmtPrice(l.convert.worst, l.from)}〜${fmtPrice(l.convert.best, l.from)})</span></td>` +
 			`<td class="num ${cls(l.profit.vwap)}"><b>${pct(l.profit.vwap)}</b></td>` +
 			`<td class="num"><b>${fmtLive(l)}</b></td>` +
 			`<td class="num ${cls(l.profit.conservative)}">${pct(l.profit.conservative)}</td>` +
@@ -330,7 +330,7 @@ function renderDetail(l: Loop) {
 			`<ol class="ref">` +
 			`<li>${hubShort(l.from)} で買う: ${refLeg(r.buy, (p) => fmtPrice(p, l.buy.hub) + ' / 個')}</li>` +
 			`<li>${hubShort(l.to)} で売る: ${refLeg(r.sell, (p) => fmtPrice(p, l.sell.hub) + ' / 個')}</li>` +
-			`<li>${hubShort(l.to)} → ${hubShort(l.from)}: ${refLeg(r.convert, (p) => `1 ${hubShort(l.to)} = ${trim(p)} ${hubShort(l.from)}`)}</li>` +
+			`<li>${hubShort(l.to)} → ${hubShort(l.from)}: ${refLeg(r.convert, (p) => `1 ${hubShort(l.to)} = ${fmtPrice(p, l.from)}`)}</li>` +
 			`</ol>` +
 			(r.profit !== null
 				? `<p>最良出品で回した場合: <b class="${cls(r.profit)}">${pct(r.profit)}</b> <span class="k">(在庫の上限 ${Math.min(r.buy!.stock, r.sell!.stock)} 個)</span></p>`
@@ -345,7 +345,7 @@ function renderDetail(l: Loop) {
 		`<ol>` +
 		`<li><b>${hubIcon(l.from)}${from}</b> で <b>${icon(l.icon, dispName(l))}${esc(dispName(l))}</b> を買う<br><span class="k">平均約定:</span> <code>${fmtPrice(l.buy.vwap, l.buy.hub)}</code> / 個 <span class="k">(幅 ${fmtPrice(l.buy.worst, l.buy.hub)} 〜 ${fmtPrice(l.buy.best, l.buy.hub)})</span><br><span class="k">この窓の約定:</span> ${l.buy.volumeItems} 個 (${l.buy.volumeHub} ${hubShort(l.buy.hub)})</li>` +
 		`<li><b>${icon(l.icon, dispName(l))}${esc(dispName(l))}</b> を <b>${hubIcon(l.to)}${to}</b> で売る<br><span class="k">平均約定:</span> <code>${fmtPrice(l.sell.vwap, l.sell.hub)}</code> / 個 <span class="k">(幅 ${fmtPrice(l.sell.worst, l.sell.hub)} 〜 ${fmtPrice(l.sell.best, l.sell.hub)})</span><br><span class="k">この窓の約定:</span> ${l.sell.volumeItems} 個 (${l.sell.volumeHub} ${hubShort(l.sell.hub)})</li>` +
-		`<li><b>${hubIcon(l.to)}${to}</b> を <b>${hubIcon(l.from)}${from}</b> に戻す<br><span class="k">平均レート:</span> 1 ${hubShort(l.to)} = <code>${trim(l.convert.vwap)}</code> ${hubShort(l.from)} <span class="k">(幅 ${trim(l.convert.worst)} 〜 ${trim(l.convert.best)})</span></li>` +
+		`<li><b>${hubIcon(l.to)}${to}</b> を <b>${hubIcon(l.from)}${from}</b> に戻す<br><span class="k">平均レート:</span> 1 ${hubShort(l.to)} = <code>${fmtPrice(l.convert.vwap, l.from)}</code> <span class="k">(幅 ${fmtPrice(l.convert.worst, l.from)} 〜 ${fmtPrice(l.convert.best, l.from)})</span></li>` +
 		`</ol>` +
 		`<p><span class="k">VWAPでの試算 (${start} ${hubShort(l.from)} 開始):</span><br>` +
 		`${start} ${hubShort(l.from)} → ${trim(items)} 個 → ${trim(got)} ${hubShort(l.to)} → <b class="${cls(l.profit.vwap)}">${trim(back)} ${hubShort(l.from)}</b> (${pct(l.profit.vwap)})</p>` +
