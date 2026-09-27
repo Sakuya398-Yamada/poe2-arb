@@ -6,13 +6,14 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { buildBook, findLoops, goldPerHubFromEx, loopKey, scoreRecurrence } from './arb.js';
+import { buildBook, findLoops, goldPerHubFromEx, liveProfit, loopKey, scoreRecurrence } from './arb.js';
 import { fetchWindow } from './ggg.js';
 import { loadGoldFees } from './gold.js';
 import { loadTradeStatic } from './trade.js';
 import { loadNames, makeResolver } from './names.js';
 import { loadWikiIcons } from './wiki.js';
 import { fetchReference, type LoopRequest } from './exchange.js';
+import { liveRates, noteView, type HubTradeIds } from './live.js';
 import { HUB_IDS, type Hub, type LoopsResponse, type ReferenceResponse } from '../shared/types.js';
 
 const PORT = Number(process.env.PORT ?? 8765);
@@ -55,7 +56,22 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 		l.recurrence = recurrence.get(loopKey(l)) ?? { hoursProfitable: 0, hoursTotal: hourly.length, medianProfit: null };
 	}
 	const hubIcons: LoopsResponse['hubIcons'] = {};
-	for (const h of HUBS) { const icon = resolve(HUB_IDS[h]).icon; if (icon) hubIcons[h] = icon; }
+	const hubTradeIds: HubTradeIds = {};
+	for (const h of HUBS) {
+		const icon = resolve(HUB_IDS[h]).icon;
+		if (icon) hubIcons[h] = icon;
+		const name = names[HUB_IDS[h]]?.name;
+		const id = name ? trade.tradeIds[name] : undefined;
+		if (id) hubTradeIds[h] = id;
+	}
+	// Live hub conversion (#19): note that the table is being viewed so the poller keeps running, then use whatever
+	// it has fetched so far. Only in-band rates feed the profit; an off-band one is still shown in the status line.
+	noteView(league, hubs, hubTradeIds);
+	const live = liveRates(league, hubs, hubTradeIds, (f, t) => book.hubRates.get(`${f}|${t}`)?.vwap);
+	for (const l of loops) {
+		const rate = live.rates.find((x) => x.from === l.from && x.to === l.to);
+		if (rate?.inBand) l.profit.live = liveProfit(l, rate.price);
+	}
 	loops.sort((a, b) => b.profit.vwap - a.profit.vwap);
 	const r = book.hubRates.get(`${hubs[0]}|${hubs[1]}`);
 	return {
@@ -71,6 +87,8 @@ export async function loops(league: string, hours: number, hubs: [Hub, Hub]): Pr
 		goldPerHub,
 		loops,
 		skipped,
+		liveRates: live.rates,
+		...(live.error ? { liveError: live.error } : {}),
 	};
 }
 

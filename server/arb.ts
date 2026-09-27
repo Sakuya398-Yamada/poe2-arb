@@ -153,6 +153,14 @@ export function computeLoop(
 	};
 }
 
+/**
+ * profit.vwap with the last leg swapped for another conversion rate (`from` units per 1 `to`, same as
+ * Loop.convert.vwap). Buy and sell legs stay at their exchange VWAP: only hub↔hub listings are trusted live.
+ */
+export function liveProfit(l: Pick<Loop, 'buy' | 'sell'>, convert: number): number {
+	return (l.sell.vwap * convert) / l.buy.vwap;
+}
+
 export interface NameResolver {
 	(itemId: string): { name: string; category: string; icon?: string; ja?: string };
 }

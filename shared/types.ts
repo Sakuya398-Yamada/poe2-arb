@@ -99,6 +99,11 @@ export interface Loop {
 		 * Only present when the fee is known and POE2ARB_GOLD_PER_EX is set.
 		 */
 		afterFee?: number;
+		/**
+		 * vwap with only the hub conversion replaced by the live trade-site listing (LiveHubRate.price):
+		 * sell.vwap × live / buy.vwap. Missing when no usable live rate exists for from→to.
+		 */
+		live?: number;
 	};
 	/** rough capacity: min(items traded on buy side, items traded on sell side) in the window */
 	capacityItems: number;
@@ -140,6 +145,31 @@ export interface LoopsResponse {
 	loops: Loop[];
 	/** items that had a market in only one hub (no loop possible) — for transparency */
 	skipped: number;
+	/** live hub conversion for both directions of `hubs` (from→to = hubs[0]→hubs[1], then the reverse); fetched ones only */
+	liveRates: LiveHubRate[];
+	/** last problem of the background poller (rate limited, HTTP error, unresolved trade-site id) */
+	liveError?: string;
+}
+
+/**
+ * Hub→hub conversion from the trade site's Bulk Item Exchange, polled in the background (server/live.ts).
+ * Same orientation as Loop.convert: `from` units you get for 1 `to` unit.
+ */
+export interface LiveHubRate {
+	from: Hub;
+	to: Hub;
+	/** best listing inside the VWAP band (1/1.25〜1.25×, LIVE_BAND), or the best overall when `inBand` is false */
+	price: number;
+	/** `to` units that listing takes */
+	stock: number;
+	offers: number;
+	listed: number;
+	/** false = every listing is outside the band; `Loop.profit.live` is not computed from such a rate */
+	inBand: boolean;
+	/** GGG exchange VWAP for the same direction in the current window, null when that pair had no trades */
+	vwap: number | null;
+	/** unix seconds when the listings were fetched */
+	fetchedAt: number;
 }
 
 /**

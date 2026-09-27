@@ -24,6 +24,7 @@ poe2-arb/
 │   ├── arb.ts           # 純粋関数: レシオ正規化・Book 構築・ループ計算
 │   ├── names.ts         # RePoE から名前・カテゴリ・アートパス解決（.cache/names.json）
 │   ├── trade.ts         # 公式トレード静的データ(EN/JP)からアイコンURL・日本語名解決（.cache/trade.json）
+│   ├── live.ts          # ハブ通貨間の換算レートをトレードサイトから自動取得（60秒に1方向・閲覧中のみ）
 │   └── wiki.ts          # トレード静的データに無いアイテムのアイコンを poe2wiki から補完（.cache/wiki-icons.json）
 ├── shared/
 │   └── types.ts         # サーバ/フロント共通型・ハブ通貨定義

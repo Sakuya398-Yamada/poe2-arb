@@ -1,4 +1,4 @@
-import { HUB_LABEL, type Hub, type Loop, type LoopReference, type LoopsResponse, type ReferenceLeg, type ReferenceResponse } from '../shared/types.js';
+import { HUB_LABEL, type Hub, type LiveHubRate, type Loop, type LoopReference, type LoopsResponse, type ReferenceLeg, type ReferenceResponse } from '../shared/types.js';
 import { FILTER_COLS, activeCount, compileRanges, defaultRanges, passesRanges, restoreRanges, type RangeInputs } from './filter.js';
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -17,7 +17,7 @@ const detail = $<HTMLElement>('#detail');
 const refBtn = $<HTMLButtonElement>('#ref');
 const refStatus = $<HTMLElement>('#refStatus');
 
-type SortKey = 'name' | 'buy' | 'sell' | 'vwap' | 'cons' | 'opt' | 'fee' | 'net' | 'cap' | 'rec' | 'med';
+type SortKey = 'name' | 'buy' | 'sell' | 'vwap' | 'live' | 'cons' | 'opt' | 'fee' | 'net' | 'cap' | 'rec' | 'med';
 const RECURRENCE_KEYS: SortKey[] = ['rec', 'med'];
 let sortKey: SortKey = 'vwap';
 let sortDesc = true;
@@ -44,6 +44,10 @@ const gold = (g: number) => `${Math.round(g).toLocaleString('en-US')}g`;
 const fmtFee = (l: Loop) => l.goldFee
 	? `${gold(l.goldFee.total)} <span class="rng">(${gold(l.goldFee.item)}+${gold(l.goldFee.toHub)}+${gold(l.goldFee.fromHub)})</span>`
 	: '<span class="rng">?</span>';
+const fmtLive = (l: Loop) => l.profit.live !== undefined ? `<span class="${cls(l.profit.live)}">${pct(l.profit.live)}</span>` : '<span class="rng">—</span>';
+/** live rate vs the exchange VWAP of the same direction, as the % the loop gains (+) or loses (−) on the last leg */
+const liveGap = (r: LiveHubRate) => (r.vwap ? `VWAP比 <span class="${cls(r.price / r.vwap)}">${pct(r.price / r.vwap)}</span>` : 'VWAPなし');
+const liveRateOf = (l: Loop) => data?.liveRates.find((r) => r.from === l.from && r.to === l.to);
 const fmtNet = (l: Loop) => l.profit.afterFee !== undefined ? `<span class="${cls(l.profit.afterFee)}">${pct(l.profit.afterFee)}</span>` : '<span class="rng">—</span>';
 
 /** Show "hub per item" as a readable ratio: 0.0143 div → "70 : 1 div" style, or "12.5 ex". */
@@ -196,9 +200,24 @@ function renderStatus() {
 		`<b>${data.league}</b> ／ 集計窓 <b>${fmtTime(data.windowStart)} 〜 ${fmtTime(data.windowEnd)}</b>` +
 		` (${data.hoursUsed}h) ／ ${rate} ／ ループ候補 <b>${data.loops.length / 2 | 0}</b> アイテム` +
 		` (片側のみ ${data.skipped}) ／ 取得 ${fmtTime(data.generatedAt)}` +
+		` ／ ${liveStatus()}` +
 		(data.goldPerHub.ex
 			? ` ／ ゴールド換算 1 ${hubShort('ex')} = <b>${gold(data.goldPerHub.ex)}</b>`
 			: ' ／ <span class="rng">ゴールド換算なし (POE2ARB_GOLD_PER_EX 未設定)</span>');
+}
+
+/** "換算ライブ" part of the status line: both directions of the pair on screen, with fetch time and gap to VWAP */
+function liveStatus(): string {
+	if (!data) return '';
+	const [a, b] = data.hubs;
+	const one = (from: Hub, to: Hub) => {
+		const r = data!.liveRates.find((x) => x.from === from && x.to === to);
+		if (!r) return `1 ${hubShort(to)} = <span class="rng">未取得</span>`;
+		const off = r.inBand ? '' : ' <span class="neg">(出品すべて VWAP の 0.8〜1.25倍の外。利益に使わない)</span>';
+		return `1 ${hubIcon(to)}${hubShort(to)} = <b>${hubIcon(from)}${fmtPrice(r.price, from)}</b> <span class="rng">(${liveGap(r)}, ${fmtTime(r.fetchedAt)})</span>${off}`;
+	};
+	const err = data.liveError ? ` <span class="err" title="${esc(data.liveError)}">取得エラー</span>` : '';
+	return `<span title="トレードサイトのハブ通貨どうしの出品。60 秒に 1 方向ずつ自動取得(6 方向で 1 周 6 分)">換算ライブ</span> ${one(a, b)} ・ ${one(b, a)}${err}`;
 }
 
 function filtered(): Loop[] {
@@ -214,7 +233,7 @@ function filtered(): Loop[] {
 	);
 	const key = (l: Loop): number | string => ({
 		name: dispName(l), buy: l.buy.vwap, sell: l.sell.vwap,
-		vwap: l.profit.vwap, cons: l.profit.conservative, opt: l.profit.optimistic, cap: l.capacityItems,
+		vwap: l.profit.vwap, live: l.profit.live ?? (sortDesc ? -Infinity : Infinity), cons: l.profit.conservative, opt: l.profit.optimistic, cap: l.capacityItems,
 		// unknown fee / no gold rate sort to the bottom in both directions
 		fee: l.goldFee?.total ?? (sortDesc ? -Infinity : Infinity),
 		net: l.profit.afterFee ?? (sortDesc ? -Infinity : Infinity),
@@ -260,6 +279,7 @@ function render() {
 			`<td class="num">${fmtPrice(l.sell.vwap, l.sell.hub)} <span class="rng">(${fmtPrice(l.sell.worst, l.sell.hub)}〜${fmtPrice(l.sell.best, l.sell.hub)})</span></td>` +
 			`<td class="num">${trim(l.convert.vwap)} <span class="rng">(${trim(l.convert.worst)}〜${trim(l.convert.best)})</span></td>` +
 			`<td class="num ${cls(l.profit.vwap)}"><b>${pct(l.profit.vwap)}</b></td>` +
+			`<td class="num"><b>${fmtLive(l)}</b></td>` +
 			`<td class="num ${cls(l.profit.conservative)}">${pct(l.profit.conservative)}</td>` +
 			`<td class="num ${cls(l.profit.optimistic)}">${pct(l.profit.optimistic)}</td>` +
 			`<td class="num">${fmtFee(l)}</td>` +
@@ -271,7 +291,7 @@ function render() {
 		tr.addEventListener('click', () => { selected = loopKey(l); renderDetail(l); render(); });
 		tbody.append(tr);
 	});
-	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="15" class="l">条件に合うループなし</td></tr>';
+	if (rows.length === 0) tbody.innerHTML = '<tr><td colspan="16" class="l">条件に合うループなし</td></tr>';
 }
 
 /** Gold fee paragraph for the detail panel, scaled to the illustrative stack. */
@@ -285,6 +305,16 @@ function feeDetail(l: Loop, items: number): string {
 	return `<p><span class="k">ゴールド手数料の見積り (${trim(items)} 個分):</span> <b>${gold(total)}</b><br>` +
 		`<span class="k">内訳/個:</span> ${esc(l.name)} ${gold(f.item)} + ${hubShort(l.to)} ${gold(f.toHub)} + ${hubShort(l.from)} ${gold(f.fromHub)} = ${gold(f.total)}` +
 		net + `</p>`;
+}
+
+/** Detail-panel line for the live hub conversion, run through the same illustrative stack as the VWAP estimate. */
+function liveDetail(l: Loop, start: number, got: number): string {
+	const r = liveRateOf(l);
+	if (!r) return `<p class="k">換算ライブ: 未取得（画面を開いている間、ハブ通貨どうしの出品を自動取得）</p>`;
+	const rate = `1 ${hubShort(l.to)} = <code>${fmtPrice(r.price, l.from)}</code> <span class="k">(${liveGap(r)}, 在庫 ${r.stock}, ${fmtTime(r.fetchedAt)} 取得)</span>`;
+	if (l.profit.live === undefined) return `<p><span class="k">換算ライブ:</span> ${rate}<br><span class="k">出品がすべて VWAP の 0.8〜1.25倍の外なので利益には使わない</span></p>`;
+	return `<p><span class="k">換算ライブ:</span> ${rate}<br>` +
+		`<span class="k">換算だけライブにした試算:</span> ${trim(got)} ${hubShort(l.to)} → <b class="${cls(l.profit.live)}">${trim(got * r.price)} ${hubShort(l.from)}</b> (${pct(l.profit.live)}) <span class="k">(${start} ${hubShort(l.from)} 開始)</span></p>`;
 }
 
 function renderDetail(l: Loop) {
@@ -319,6 +349,7 @@ function renderDetail(l: Loop) {
 		`</ol>` +
 		`<p><span class="k">VWAPでの試算 (${start} ${hubShort(l.from)} 開始):</span><br>` +
 		`${start} ${hubShort(l.from)} → ${trim(items)} 個 → ${trim(got)} ${hubShort(l.to)} → <b class="${cls(l.profit.vwap)}">${trim(back)} ${hubShort(l.from)}</b> (${pct(l.profit.vwap)})</p>` +
+		liveDetail(l, start, got) +
 		`<p class="k">保守(極端値) ${pct(l.profit.conservative)} ／ 楽観(極端値) ${pct(l.profit.optimistic)}<br>取引数の目安: ${l.capacityItems} 個/窓</p>` +
 		feeDetail(l, items) +
 		(l.recurrence && l.recurrence.hoursTotal >= 2
